@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body,
+      html {
+        background-color: #000;
+        margin: 0;
+        padding: 0;
+        text-align: center;
+        color: #999;
+        display: flex;
+        flex-direction: column;
+      }
+
+      select,
+      button {
+        background-color: #000;
+        color: #999;
+        border: solid 1px #999;
+      }
+
+      button {
+        font-size: large;
+        margin-top: 10px;
+      }
+
+      #image,
+      #settings {
+        overflow: hidden;
+        position: relative;
+      }
+
+      #therm table {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        height: 36px;
+      }
+
+      #imageContainer {
+        display: inline-block;
+        margin-left: auto;
+        margin-right: auto;
+        position: relative;
+        overflow: hidden;
+        width: 100%;
+        padding-top: calc(3 / 4 * 100%);
+      }
+
+      #canvas,
+      #colorImage {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 1;
+      }
+
+      #colorImage {
+        transform: scale(1.1);
+      }
+
+      #status {
+        text-align: center;
+        font-family: "Courier New", Courier, monospace;
+      }
+
+      .flex {
+        display: flex;
+        justify-content: space-between;
+      }
+
+      .flex-1 {
+        flex: 1;
+      }
+
+      .flex-c {
+        flex-direction: column;
+      }
+
+      .center {
+        text-align: center;
+      }
+
+      #therm {
+        border-bottom: solid 1px #ddd;
+        padding-bottom: 2px;
+        height: 36px;
+        position: absolute;
+        width: 100%;
+        bottom: 18px;
+        left: 0;
+      }
+
+      #rangeSetting {
+        border-bottom: solid 1px #ddd;
+        padding-bottom: 2px;
+        margin-bottom: 5px;
+      }
+
+      table {
+        width: 100%;
+      }
+
+      #rangeTable {
+        height: 10px;
+      }
+
+      label {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+      }
+
+      label input {
+        align-self: center;
+        width: 100%;
+      }
+
+      #minTherm {
+        color: blue;
+      }
+
+      #centerTherm {
+        color: #ddd;
+      }
+
+      #maxTherm {
+        color: red;
+      }
+
+      #marker {
+        position: absolute;
+        color: #fff;
+        text-shadow: 0 0 black;
+        font-size: 30px;
+        opacity: 0;
+      }
+
+      #status {
+        margin-top: 50px;
+      }
+
+      @media (orientation: landscape) {
+        body {
+          flex-direction: row;
+        }
+        #settings {
+          flex: 1;
+        }
+        #image {
+          width: calc(4 / 3 * 100vh);
+        }
+      }
+    </style>
+
+    <script>
+      Color = function (hexOrObject) {
+        var obj;
+        if (hexOrObject instanceof Object) {
+          obj = hexOrObject;
+        } else {
+          obj = LinearColorInterpolator.convertHexToRgb(hexOrObject);
+        }
+        this.r = obj.r;
+        this.g = obj.g;
+        this.b = obj.b;
+        this.a = obj.a;
+      };
+      Color.prototype.asRgbCss = function () {
+        return (
+          "rgba(" + this.r + ", " + this.g + ", " + this.b + ", " + this.a + ")"
+        );
+      };
+
+      var LinearColorInterpolator = {
+        convertHexToRgb: function (hex) {
+          match = hex.replace(/#/, "").match(/.{1,2}/g);
+          return new Color({
+            r: parseInt(match[0], 16),
+            g: parseInt(match[1], 16),
+            b: parseInt(match[2], 16),
+            a: hex.length > 7 ? parseInt(match[3], 16) : 255,
+          });
+        },
+        findColorBetween: function (left, right, percentage) {
+          newColor = {};
+          components = ["r", "g", "b", "a"];
+          for (var i = 0; i < components.length; i++) {
+            c = components[i];
+            newColor[c] = Math.round(
+              left[c] + ((right[c] - left[c]) * percentage) / 100
+            );
+          }
+          return new Color(newColor);
+        },
+      };
+    </script>
+  </head>
+
+  <body>
+    <div id="image">
+      <div id="imageContainer">
+        <img id="colorImage" />
+        <canvas id="canvas"></canvas>
+        <div id="marker">+</div>
+      </div>
+      <div id="therm">
+        <table border="0" cellspacing="0" cellpadding="0">
+          <tr id="valueTable"></tr>
+          <tr id="rangeTable"></tr>
+        </table>
+      </div>
+      <div class="center">
+        <span id="meterValue"></span>
+      </div>
+    </div>
+    <div id="settings">
+      <div class="flex">
+        <label id="minContainer"
+          ><span>Min <span id="minSetting"></span></span
+          ><input
+            type="range"
+            id="minValue"
+            min="-20"
+            max="100"
+            step="1"
+            value="20"
+            oninput="updateSettings()"
+        /></label>
+        <label id="distanceContainer"
+          ><span>Min Distance <span id="distanceSetting"></span></span
+          ><input
+            type="range"
+            id="distanceValue"
+            min="0"
+            max="15"
+            step="1"
+            value="5"
+            oninput="updateSettings()"
+        /></label>
+        <label id="maxContainer"
+          ><span>Max <span id="maxSetting"></span></span
+          ><input
+            type="range"
+            id="maxValue"
+            min="-20"
+            max="100"
+            step="1"
+            value="40"
+            oninput="updateSettings()"
+        /></label>
+      </div>
+      <div class="flex">
+        <label
+          >Adaptive<input
+            type="checkbox"
+            id="adaptiveValue"
+            checked
+            onchange="updateSettings()"
+        /></label>
+        <div class="flex flex-1 flex-c">
+          <label
+            >Palette<select
+              id="paletteValue"
+              onchange="updateSettings()"
+            ></select
+          ></label>
+          <label
+            >Fps<select id="hardwareFpsValue" onchange="setFpsValue()"></select
+          ></label>
+          <label
+            ><span>Opacity <span id="opacitySetting"></span></span
+            ><input
+              type="range"
+              id="opacityValue"
+              min="0"
+              max="100"
+              step="5"
+              value="100"
+              oninput="updateSettings()"
+          /></label>
+        </div>
+        <label
+          >Average<input
+            type="checkbox"
+            id="avgValue"
+            onchange="updateSettings()"
+        /></label>
+      </div>
+      <div class="center">
+        <button id="connectDisconnect">Connect</button>
+        <button id="capture">Capture</button>
+      </div>
+      <div id="status">
+        <span id="fps"></span><br />
+        <span id="debugStatus"></span>
+      </div>
+    </div>
+    <script>
+      const sizeX = 32;
+      const sizeY = 24;
+      const multiplier = 20;
+      const numParts = 4;
+
+      let rangeMin = 20;
+      let rangeMax = 40;
+      let adaptiveRange = true;
+      const palettes = [
+        {
+          name: "FLIR Transparent",
+          stops: ["#00000000", "#20008C", "#CC0077", "#FFD700", "#FFFFFF"],
+        },
+        {
+          name: "FLIR",
+          stops: ["#000000", "#20008C", "#CC0077", "#FFD700", "#FFFFFF"],
+        },
+        {
+          name: "BW Transparent",
+          stops: ["#00000000", "#FFFFFF"],
+        },
+        {
+          name: "BW",
+          stops: ["#000000", "#FFFFFF"],
+        },
+        {
+          name: "WB Transparent",
+          stops: ["#FFFFFF00", "#000000"],
+        },
+        {
+          name: "WB",
+          stops: ["#FFFFFF", "#000000"],
+        },
+      ];
+      let currentPalette = null;
+      let accumlator = [];
+      let avg = false;
+      let imageLoading = false;
+      let metercoords = null;
+      let mindistance = 10;
+
+      let frameCount = 0;
+      let opacity = 100;
+
+      const tempsFrame = new Float32Array(sizeX * sizeY);
+
+      //Define BLE Device Specs
+      const deviceName = "thermalCam";
+      const camServiceUuid = "38185cd8-4e17-e1b8-554f-dfe74135dde5";
+      const tempsFrameCharacteristicUuid =
+        "be55aaa5-8188-4063-8a57-eea168985662";
+      const statusCharacteristicUuid = "dede2126-c351-4499-b4d1-ca20a1f573a9";
+      const camFpsFloatDescUuid = "9c54c864-fe2e-4f5f-96c0-793147ec8094";
+      const gapServiceUuid = "environmental_sensing"; // environmental sensing service
+
+      //Global Variables to Handle Bluetooth
+      let bleServer;
+      let camFpsFloatDesc;
+      let bleServiceFound = false;
+      let tempsFrameCharacteristicFound = false;
+      let statusCharacteristicFound = false;
+
+      // DOM elements
+      const captureButton = document.getElementById("capture");
+      const connectDisconnectButton =
+        document.getElementById("connectDisconnect");
+      const debugStatusContainer = document.getElementById("debugStatus");
+      const meterValueContainer = document.getElementById("meterValue");
+      const canvasElem = document.getElementById("canvas");
+      const marker = document.getElementById("marker");
+      const colorImageElem = document.getElementById("colorImage");
+      const fpsContainer = document.getElementById("fps");
+      const valueTableContainer = document.getElementById("valueTable");
+      const paletteValue = document.getElementById("paletteValue");
+      const hardwareFpsValue = document.getElementById("hardwareFpsValue");
+      const opacityValue = document.getElementById("opacityValue");
+      const minValue = document.getElementById("minValue");
+      const maxValue = document.getElementById("maxValue");
+      const distanceValue = document.getElementById("distanceValue");
+      const adaptiveValue = document.getElementById("adaptiveValue");
+      const avgValue = document.getElementById("avgValue");
+      const rangeTableElement = document.getElementById("rangeTable");
+      const opacitySetting = document.getElementById("opacitySetting");
+      const canvas = document.getElementById("canvas");
+      const distanceContainer = document.getElementById("distanceContainer");
+      const minContainer = document.getElementById("minContainer");
+      const maxContainer = document.getElementById("maxContainer");
+      const minSetting = document.getElementById("minSetting");
+      const maxSetting = document.getElementById("maxSetting");
+      const distanceSetting = document.getElementById("distanceSetting");
+
+      // functions
+
+      function connectDisconnect() {
+        if (!navigator.bluetooth) {
+          debugStatusContainer.innerHTML =
+            "Web Bluetooth API is not available in this browser!";
+          return;
+        }
+
+        if (connectDisconnectButton.innerHTML === "Connect") {
+          connectToDevice();
+        } else {
+          disconnectDevice();
+        }
+      }
+
+      async function connectToDevice() {
+        try {
+          const device = await navigator.bluetooth.requestDevice({
+            filters: [
+              {
+                name: deviceName,
+                // services: [gapServiceUuid]
+              },
+            ],
+            // acceptAllDevices : true,
+            optionalServices: [camServiceUuid],
+          });
+
+          console.log("Device Selected:", device.name);
+          device.addEventListener("gattservicedisconnected", onDisconnected);
+
+          const gattServer = await device.gatt.connect();
+          bleServer = gattServer;
+          console.log("Connected to GATT Server");
+
+          const service = await bleServer.getPrimaryService(camServiceUuid);
+          bleServiceFound = service;
+          console.log("Service discovered:", service.uuid);
+
+          const tempsFrameCharacteristic = await service.getCharacteristic(
+            tempsFrameCharacteristicUuid
+          );
+
+          tempsFrameCharacteristicFound = tempsFrameCharacteristic;
+          tempsFrameCharacteristicFound.addEventListener(
+            "characteristicvaluechanged",
+            handleTempsCharacteristicChange
+          );
+          await tempsFrameCharacteristicFound.startNotifications();
+
+          camFpsFloatDesc = await tempsFrameCharacteristic.getDescriptor(
+            camFpsFloatDescUuid
+          );
+
+          await readFpsValue();
+
+          const statusCharacteristic = await service.getCharacteristic(
+            statusCharacteristicUuid
+          );
+
+          statusCharacteristicFound = statusCharacteristic;
+          statusCharacteristicFound.addEventListener(
+            "characteristicvaluechanged",
+            handleStatusCharacteristicChange
+          );
+          await statusCharacteristicFound.startNotifications();
+
+          console.log("Notifications Started.");
+
+          connectDisconnectButton.innerHTML = "Disconnect";
+          captureButton.style.display = "";
+        } catch (error) {
+          debugStatusContainer.innerHTML = "Error: " + error;
+          console.error("Error: ", error);
+        }
+      }
+
+      function onDisconnected(event) {
+        console.log("Device Disconnected:", event.target.device.name);
+        connectDisconnectButton.innerHTML = "Connect";
+        captureButton.style.display = "none";
+      }
+
+      async function disconnectDevice() {
+        console.log("Disconnect Device.");
+        if (bleServer && bleServer.connected) {
+          try {
+            if (tempsFrameCharacteristicFound)
+              await tempsFrameCharacteristicFound.stopNotifications();
+
+            if (statusCharacteristicFound)
+              await statusCharacteristicFound.stopNotifications();
+
+            console.log("Notifications Stopped");
+            await bleServer.disconnect();
+            console.log("Device Disconnected");
+          } catch (error) {
+            console.log("An error occurred:", error);
+          }
+        } else {
+          // Throw an error if Bluetooth is not connected
+          debugStatusContainer.innerHTML = "Bluetooth is not connected.";
+        }
+
+        connectDisconnectButton.innerHTML = "Connect";
+        captureButton.style.display = "none";
+      }
+
+      function handleTempsCharacteristicChangeJustPrint(event) {
+        const dataView = event.target.value;
+
+        const seq = new Int16Array(dataView.buffer.slice(0, 2))[0];
+
+        if (seq < 0 || seq >= numParts) {
+          console.error("Invalid sequence number: ", seq);
+          return;
+        }
+        // console.log("Seq: ", seq);
+      }
+
+      function handleTempsCharacteristicChange(event) {
+        const dataView = event.target.value;
+
+        const seq = new Int16Array(dataView.buffer.slice(0, 2))[0];
+
+        if (seq < 0 || seq >= numParts) {
+          console.error("Invalid sequence number: ", seq);
+          return;
+        }
+
+        const temperaturesX100 = new Int16Array(
+          dataView.buffer.slice(2, dataView.byteLength)
+        );
+
+        // restore the float32 temperatures from the 16 bit integers by dividing by 100
+        for (let i = 0; i < temperaturesX100.length; i++) {
+          tempsFrame[(sizeX * sizeY * seq) / numParts + i] =
+            temperaturesX100[i] / 100.0;
+        }
+
+        if (seq == numParts - 1) {
+          frameCount++;
+          if (avg) {
+            if (accumlator == null || accumlator.length != tempsFrame.length) {
+              accumlator = tempsFrame;
+            } else {
+              accumlator.forEach((elem, index) => {
+                accumlator[index] =
+                  Math.round(((elem + tempsFrame[index]) / 2) * 10) / 10;
+              });
+              drawCanvas(accumlator);
+            }
+          } else {
+            drawCanvas(tempsFrame);
+          }
+        }
+      }
+
+      function handleStatusCharacteristicChange(event) {
+        const newValueReceived = new TextDecoder().decode(event.target.value);
+        debugStatusContainer.innerHTML = newValueReceived;
+      }
+
+      function drawCanvas(therm) {
+        if (therm == undefined) {
+          therm = accumlator;
+        }
+        if (therm.length != sizeX * sizeY) {
+          return;
+        }
+        const thermMin = Math.min(...therm);
+        const thermMax = Math.max(...therm);
+        const thermCenter = thermMin + (thermMax - thermMin) / 2;
+        let min = thermMin;
+        let max = thermMax;
+        if (thermMax - thermMin < mindistance) {
+          min = Math.round((thermCenter - mindistance / 2) * 10) / 10;
+          max = Math.round((thermCenter + mindistance / 2) * 10) / 10;
+        }
+        let meter = therm[(sizeY / 2) * sizeX + sizeX / 2];
+        if (metercoords) {
+          meter = therm[metercoords.y * sizeX + (sizeX - 1 - metercoords.x)];
+        }
+        meterValueContainer.innerText =
+          (metercoords != null ? "Marker: " : "Center: ") +
+          Math.round(meter * 10) / 10;
+        if (adaptiveRange) {
+          drawRangeTable(min, max);
+        } else {
+          drawRangeTable(rangeMin, rangeMax);
+        }
+        canvasElem.width = sizeX;
+        canvasElem.height = sizeY;
+        const ctx = canvasElem.getContext("2d", { willReadFrequently: true });
+        const canvasWidth = sizeX;
+        const canvasHeight = sizeY;
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+        const id = ctx.getImageData(0, 0, sizeX, sizeY);
+        var pixels = id.data;
+
+        let thermCount = 0;
+        for (var y = 0; y < sizeY; y++) {
+          for (var x = 0; x < sizeX; x++) {
+            const val = map(
+              therm[thermCount],
+              adaptiveRange ? min : rangeMin,
+              adaptiveRange ? max : rangeMax,
+              0,
+              100
+            );
+            const off = (y * id.width + (sizeX - 1 - x)) * 4;
+            // const off = (y * id.width + x) * 4; // Changed this line
+
+            const color = getPaletteColor(val);
+            pixels[off] = color.r;
+            pixels[off + 1] = color.g;
+            pixels[off + 2] = color.b;
+            pixels[off + 3] = color.a;
+            thermCount++;
+          }
+        }
+        ctx.putImageData(id, 0, 0, 0, 0, sizeX, sizeY);
+      }
+
+      async function readFpsValue() {
+        // read from the device
+        const data = await camFpsFloatDesc.readValue();
+        const floatVal = new Float32Array(data.buffer)[0];
+        hardwareFpsValue.value = floatVal;
+      }
+
+      async function setFpsValue() {
+        // send to the device
+        fps = parseFloat(hardwareFpsValue.value);
+        const data = new Float32Array([fps]);
+        await camFpsFloatDesc.writeValue(data.buffer);
+      }
+
+      function updateSettings() {
+        avg = avgValue.checked;
+        adaptiveRange = adaptiveValue.checked;
+
+        if (
+          currentPalette != palettes[parseInt(paletteValue.value, 10)] ||
+          rangeTableElement.innerHTML.trim() == ""
+        ) {
+          currentPalette = palettes[parseInt(paletteValue.value, 10)];
+          let rangeTable =
+            '<td colspan="' +
+            currentPalette.stops.length +
+            '" style="background:linear-gradient(to right';
+          currentPalette.stops.forEach((stop) => {
+            rangeTable += "," + new Color(stop).asRgbCss();
+          });
+          rangeTable += ')"></td>';
+          rangeTableElement.innerHTML = rangeTable;
+        }
+
+        opacity = parseInt(opacityValue.value, 10);
+        opacitySetting.innerText = opacity + "%";
+        canvas.style.opacity = opacity / 100;
+        rangeTableElement.style.opacity = opacity / 100;
+
+        if (!adaptiveRange) {
+          distanceContainer.style.display = "none";
+          minContainer.style.display = "inline-block";
+          maxContainer.style.display = "inline-block";
+
+          rangeMin = parseInt(minValue.value, 10);
+          rangeMax = parseInt(maxValue.value, 10);
+          minSetting.innerText = rangeMin;
+          maxSetting.innerText = rangeMax;
+        } else {
+          distanceContainer.style.display = "inline-block";
+          minContainer.style.display = "none";
+          maxContainer.style.display = "none";
+
+          mindistance = parseInt(distanceValue.value, 10);
+          distanceSetting.innerText = mindistance;
+        }
+        saveSettings();
+        drawCanvas();
+      }
+
+      function saveSettings() {
+        let saveObj = {
+          avg: avg,
+          adaptiveRange: adaptiveRange,
+          currentPalette: palettes.indexOf(currentPalette),
+          opacity: opacity,
+          rangeMin: rangeMin,
+          rangeMax: rangeMax,
+          mindistance: mindistance,
+        };
+        localStorage.setItem("settings", JSON.stringify(saveObj));
+      }
+
+      function loadSettings() {
+        let settings = localStorage.getItem("settings");
+        if (settings != null) {
+          settings = JSON.parse(settings);
+          avgValue.checked = settings.avg;
+          adaptiveValue.checked = settings.adaptiveRange;
+
+          if (palettes.length > settings.currentPalette) {
+            currentPalette = palettes[settings.currentPalette];
+            paletteValue.value = settings.currentPalette;
+          }
+
+          opacityValue.value = settings.opacity;
+          minValue.value = settings.rangeMin;
+          maxValue.value = settings.rangeMax;
+          distanceValue.value = settings.mindistance;
+        }
+      }
+
+      function map(value, in_min, in_max, out_min, out_max) {
+        return (
+          ((value - in_min) * (out_max - out_min)) / (in_max - in_min) + out_min
+        );
+      }
+
+      function getPaletteColor(val) {
+        if (val <= 0) {
+          return new Color(currentPalette.stops[0]);
+        }
+        if (val >= 100) {
+          return new Color(
+            currentPalette.stops[currentPalette.stops.length - 1]
+          );
+        }
+        const stopsCount = currentPalette.stops.length - 1;
+        const relevantStop = Math.floor(val / (100 / stopsCount));
+        const left = new Color(currentPalette.stops[relevantStop]);
+        const right = new Color(currentPalette.stops[relevantStop + 1]);
+        const percentage = map(
+          val,
+          relevantStop * (100 / stopsCount),
+          (relevantStop + 1) * (100 / stopsCount),
+          0,
+          100
+        );
+        return LinearColorInterpolator.findColorBetween(
+          left,
+          right,
+          percentage
+        );
+      }
+
+      function setMeter(event) {
+        metercoords = {
+          x: Math.round(map(event.x, 0, canvasElem.clientWidth, 0, sizeX)),
+          y: Math.round(map(event.y, 0, canvasElem.clientHeight, 0, sizeY)),
+        };
+        marker.style.top =
+          metercoords.y * (canvasElem.clientHeight / sizeY) - 15 + "px";
+        marker.style.left =
+          metercoords.x * (canvasElem.clientWidth / sizeX) - 15 + "px";
+        marker.style.opacity = 1;
+      }
+
+      function drawRangeTable(min, max) {
+        let valueTable = "";
+        for (let i = 0; i < currentPalette.stops.length; i++) {
+          var value = 0;
+          value =
+            Math.round(
+              (min + ((max - min) / currentPalette.stops.length) * i) * 10
+            ) / 10;
+          valueTable +=
+            '<td style="width:' +
+            100 / currentPalette.stops.length +
+            '%">' +
+            value;
+          if (i == currentPalette.stops.length - 1) {
+            value =
+              Math.round(
+                (min + ((max - min) / currentPalette.stops.length) * (i + 1)) *
+                  10
+              ) / 10;
+            valueTable += '<span style="float:right">' + value + "</span>";
+          }
+          valueTable += "</td>";
+        }
+        valueTableContainer.innerHTML = valueTable;
+      }
+
+      function writeFPS() {
+        fpsContainer.innerText = frameCount + "FPS";
+        frameCount = 0;
+      }
+
+      function generateFileName() {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, "0");
+        const day = String(now.getDate()).padStart(2, "0");
+        const hours = String(now.getHours()).padStart(2, "0");
+        const minutes = String(now.getMinutes()).padStart(2, "0");
+        const seconds = String(now.getSeconds()).padStart(2, "0");
+        return `THERMAL_${year}${month}${day}_${hours}${minutes}${seconds}.jpg`;
+      }
+
+      function captureTherm() {
+        const canvasUrl = canvasElem.toDataURL("image/jpeg", 0.85);
+        const link = document.createElement("a");
+        link.href = canvasUrl;
+        link.download = generateFileName();
+        link.click();
+        link.remove();
+      }
+
+      // DOM setup
+
+      captureButton.addEventListener("click", captureTherm);
+      connectDisconnectButton.addEventListener("click", connectDisconnect);
+
+      canvasElem.addEventListener("click", setMeter);
+      marker.addEventListener("click", () => {
+        metercoords = null;
+        marker.style.opacity = 0;
+      });
+
+      captureButton.style.display = "none";
+      colorImageElem.width = sizeX * multiplier;
+      colorImageElem.height = sizeY * multiplier;
+
+      if (paletteValue.options.length != palettes.length) {
+        palettes.forEach((pal, index) => {
+          paletteValue.options[index] = new Option(pal.name, index);
+        });
+      }
+
+      if (hardwareFpsValue.options.length == 0) {
+        const fpsValues = [0.25, 0.5, 1, 2, 4, 8, 16, 32];
+        fpsValues.forEach((fps) => {
+          hardwareFpsValue.options[hardwareFpsValue.options.length] =
+            new Option(fps + " FPS", fps);
+        });
+      }
+
+      // exec
+
+      loadSettings();
+      updateSettings();
+      drawCanvas();
+      setInterval(writeFPS, 1000);
+    </script>
+  </body>
+</html>
