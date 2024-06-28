@@ -1,4 +1,3 @@
-#define LOG_LOCAL_LEVEL ESP_LOG_INFO
 #include <Arduino.h>
 #include <Adafruit_MLX90640.h>
 #include <driver/gpio.h>
@@ -13,10 +12,7 @@
 
 #define TAG_MAIN "main"
 
-// Bolometer stuff
 Adafruit_MLX90640 mlx;
-const size_t thermSize = (32 * 24) * sizeof(float);
-uint8_t frame[thermSize]; // buffer for full frame of temperatures
 unsigned long timeit_t1 = 0;
 bool mlx_inited = false;
 
@@ -45,6 +41,9 @@ float pollBatteryVoltage()
     Serial.flush();
     esp_deep_sleep_start();
   }
+  // lithium ion battery voltage range is 3.6V to 4.2V
+  uint8_t battery_level = (v - 3.6) / (4.2 - 3.6) * 100;
+  set_battery_level(battery_level);
 
   return v;
 }
@@ -119,15 +118,22 @@ void cam_read_loop(void *pvParameters)
   {
     now = millis();
 
-    if (!temps_frame_subscribed)
+    if (!at_least_one_subscribed())
     {
-      vTaskDelay(500 / portTICK_PERIOD_MS);
+      delay (1000);
 
       if (now - last_temps_notify > CAM_IDLE_TIMEOUT && mlx_inited)
       {
         ESP_LOGI(TAG_MAIN, "No one is subscribed to temps frame, powering off the camera");
         digitalWrite(THERMAL_CAM_POWER_PIN, LOW);
         mlx_inited = false;
+      }
+
+      if (now - last_temps_notify > BLE_IDLE_TIMEOUT)
+      {
+        ESP_LOGI(TAG_MAIN, "No one is subscribed to temps frame, deep sleeping");
+        fflush(stdout);
+        esp_deep_sleep_start();
       }
 
       continue;
@@ -163,6 +169,7 @@ void cam_read_loop(void *pvParameters)
     {
       ESP_LOGE(TAG_MAIN, "Failed to get frame: %d", res);
       current_indicator_state = INDICATOR_READ_FAILED;
+      continue;
     }
     // timeit("take_thermal");
 
@@ -176,9 +183,9 @@ void cam_read_loop(void *pvParameters)
 
     temperatures_frame_arr_idx = (temperatures_frame_arr_idx + 1) % MAX_Q_ITEMS;
 
-    // send status every STATUS_NOTIFY_ITVL ms if subscribed
+    // update status every STATUS_UPDATE_ITVL ms
 
-    if (status_subscribed && (millis() - last_status_notify) > STATUS_NOTIFY_ITVL)
+    if ((millis() - last_status_notify) > STATUS_UPDATE_ITVL)
     {
       last_status_notify = millis();
       status = {
@@ -212,7 +219,7 @@ static void temps_frame_mock_produce(void *arg)
 
   while (1)
   {
-    if (!temps_frame_subscribed)
+    if (!at_least_one_subscribed())
     {
       vTaskDelay(500 / portTICK_PERIOD_MS);
       continue;
@@ -240,6 +247,8 @@ extern "C" void app_main(void)
   esp_log_level_set(TAG_MAIN, ESP_LOG_INFO);
   esp_log_level_set(TAG_PREFS, ESP_LOG_INFO);
 
+  // delay(1000);
+
   /* Initialize NVS — it is used to store PHY calibration data */
   esp_err_t ret = nvs_flash_init();
   if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
@@ -249,8 +258,6 @@ extern "C" void app_main(void)
   }
   ESP_ERROR_CHECK(ret);
 
-  pollBatteryVoltage(); // sleep forever if battery loo low
-
 #if CONFIG_PM_ENABLE
   // Configure dynamic frequency scaling:
   // maximum and minimum frequencies are set in sdkconfig,
@@ -259,6 +266,7 @@ extern "C" void app_main(void)
       .max_freq_mhz = 80,
       .min_freq_mhz = 10,
 #if CONFIG_FREERTOS_USE_TICKLESS_IDLE
+  // couldnt get ble to work with this
   // .light_sleep_enable = true
 #endif
   };
@@ -274,6 +282,8 @@ extern "C" void app_main(void)
   // Initialize BLE
   bt_host_init();
   bt_io_init();
+
+  pollBatteryVoltage(); // set battery % and sleep forever if battery loo low
 
   xTaskCreate(indicator_task, "indicator_task", 2048, NULL, 1, NULL);
   // start reading the camera

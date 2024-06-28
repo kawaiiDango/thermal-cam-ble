@@ -2,7 +2,7 @@
 #include "config.h"
 #include <Arduino.h>
 
-enum indicator_state current_indicator_state;
+enum indicator_state current_indicator_state = INDICATOR_NOT_NOTIFYING;
 
 void indicator_task(void *pvParameter)
 {
@@ -17,17 +17,17 @@ void indicator_task(void *pvParameter)
             delay(500);
             digitalWrite(USER_LED_PIN, LOW);
             break;
-        case INDICATOR_BLE_ADVERTISING:
+        case INDICATOR_NOT_NOTIFYING:
             digitalWrite(USER_LED_PIN, HIGH);
-            delay(50);
+            delay(4);
             digitalWrite(USER_LED_PIN, LOW);
             break;
-        case INDICATOR_BLE_BONDING_REQ:
+        case INDICATOR_BONDING_REQ:
             digitalWrite(USER_LED_PIN, HIGH);
             delay(1000);
             digitalWrite(USER_LED_PIN, LOW);
             break;
-        case INDICATOR_CONNECTED:
+        case INDICATOR_NOTIFYING:
         case INDICATOR_TRANSFER_SUCCESS:
             digitalWrite(USER_LED_PIN, LOW);
             break;

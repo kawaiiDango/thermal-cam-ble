@@ -17,6 +17,7 @@ float mapf(float x, float in_min, float in_max, float out_min, float out_max)
   return (delta * rise) / run + out_min;
 }
 
+// support only up to 8 fps
 float refreshRateToFps(mlx90640_refreshrate_t rate)
 {
   switch (rate)
@@ -33,13 +34,9 @@ float refreshRateToFps(mlx90640_refreshrate_t rate)
     return 4.0f;
   case MLX90640_16_HZ:
     return 8.0f;
-  case MLX90640_32_HZ:
-    return 16.0f;
-  case MLX90640_64_HZ:
-    return 32.0f;
+  default:
+    return 2.0f;
   }
-
-  return 2.0f;
 }
 
 mlx90640_refreshrate_t fpsToRefreshRate(float fps)
@@ -56,8 +53,6 @@ mlx90640_refreshrate_t fpsToRefreshRate(float fps)
     return MLX90640_8_HZ;
   if (fps <= 8.0f)
     return MLX90640_16_HZ;
-  if (fps <= 16.0f)
-    return MLX90640_32_HZ;
   return MLX90640_4_HZ;
 }
 

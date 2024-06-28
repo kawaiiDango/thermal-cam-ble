@@ -272,7 +272,9 @@
           ></label>
           <label
             >Fps<select id="hardwareFpsValue" onchange="setFpsValue()"></select
+            ><span id="fps"></span
           ></label>
+
           <label
             ><span>Opacity <span id="opacitySetting"></span></span
             ><input
@@ -297,7 +299,6 @@
         <button id="capture">Capture</button>
       </div>
       <div id="status">
-        <span id="fps"></span><br />
         <span id="debugStatus"></span>
       </div>
     </div>
@@ -353,16 +354,13 @@
       const camServiceUuid = "38185cd8-4e17-e1b8-554f-dfe74135dde5";
       const tempsFrameCharacteristicUuid =
         "be55aaa5-8188-4063-8a57-eea168985662";
-      const statusCharacteristicUuid = "dede2126-c351-4499-b4d1-ca20a1f573a9";
       const camFpsFloatDescUuid = "9c54c864-fe2e-4f5f-96c0-793147ec8094";
-      const gapServiceUuid = "environmental_sensing"; // environmental sensing service
 
       //Global Variables to Handle Bluetooth
       let bleServer;
       let camFpsFloatDesc;
       let bleServiceFound = false;
-      let tempsFrameCharacteristicFound = false;
-      let statusCharacteristicFound = false;
+      let tempsFrameCharacteristicFound = null;
 
       // DOM elements
       const captureButton = document.getElementById("capture");
@@ -442,6 +440,8 @@
             "characteristicvaluechanged",
             handleTempsCharacteristicChange
           );
+          console.log("Notifications Started.");
+
           await tempsFrameCharacteristicFound.startNotifications();
 
           camFpsFloatDesc = await tempsFrameCharacteristic.getDescriptor(
@@ -449,19 +449,6 @@
           );
 
           await readFpsValue();
-
-          const statusCharacteristic = await service.getCharacteristic(
-            statusCharacteristicUuid
-          );
-
-          statusCharacteristicFound = statusCharacteristic;
-          statusCharacteristicFound.addEventListener(
-            "characteristicvaluechanged",
-            handleStatusCharacteristicChange
-          );
-          await statusCharacteristicFound.startNotifications();
-
-          console.log("Notifications Started.");
 
           connectDisconnectButton.innerHTML = "Disconnect";
           captureButton.style.display = "";
@@ -481,14 +468,17 @@
         console.log("Disconnect Device.");
         if (bleServer && bleServer.connected) {
           try {
-            if (tempsFrameCharacteristicFound)
-              await tempsFrameCharacteristicFound.stopNotifications();
-
-            if (statusCharacteristicFound)
-              await statusCharacteristicFound.stopNotifications();
+            if (tempsFrameCharacteristicFound) {
+              tempsFrameCharacteristicFound.stopNotifications();
+              tempsFrameCharacteristicFound.removeEventListener(
+                "characteristicvaluechanged",
+                handleTempsCharacteristicChange
+              );
+              tempsFrameCharacteristicFound = null;
+            }
 
             console.log("Notifications Stopped");
-            await bleServer.disconnect();
+            bleServer.disconnect();
             console.log("Device Disconnected");
           } catch (error) {
             console.log("An error occurred:", error);
@@ -523,9 +513,9 @@
           console.error("Invalid sequence number: ", seq);
           return;
         }
-
+        console.log("dataView.byteLength: ", dataView.byteLength);
         const temperaturesX100 = new Int16Array(
-          dataView.buffer.slice(2, dataView.byteLength)
+          dataView.buffer.slice(2, (sizeX * sizeY * 2) / numParts + 2)
         );
 
         // restore the float32 temperatures from the 16 bit integers by dividing by 100
@@ -535,6 +525,33 @@
         }
 
         if (seq == numParts - 1) {
+          // the last frame contains additional stats
+          const stats = new Float32Array(3);
+          const statusX100 = new Int16Array(
+            dataView.buffer.slice(
+              ((sizeX * sizeY) / numParts) * 2 + 2,
+              dataView.buffer.byteLength
+            )
+          );
+
+          // restore the float32 stats values from the 16 bit integers by dividing by 100
+          for (let i = 0; i < stats.length; i++) {
+            stats[i] = statusX100[i] / 100.0;
+          }
+
+          //     struct status_t
+          // {
+          //     float t_a;
+          //     float battery_voltage;
+          //     float free_heap_k;
+          // };
+          const statsText = `Ta: ${stats[0].toFixed(
+            2
+          )}°C, Battery: ${stats[1].toFixed(2)}V, Free Heap: ${stats[2].toFixed(
+            2
+          )}kB`;
+          debugStatusContainer.innerHTML = statsText;
+
           frameCount++;
           if (avg) {
             if (accumlator == null || accumlator.length != tempsFrame.length) {
@@ -550,11 +567,6 @@
             drawCanvas(tempsFrame);
           }
         }
-      }
-
-      function handleStatusCharacteristicChange(event) {
-        const newValueReceived = new TextDecoder().decode(event.target.value);
-        debugStatusContainer.innerHTML = newValueReceived;
       }
 
       function drawCanvas(therm) {
@@ -782,7 +794,7 @@
       }
 
       function writeFPS() {
-        fpsContainer.innerText = frameCount + "FPS";
+        fpsContainer.innerText = "Actual: " + frameCount;
         frameCount = 0;
       }
 
@@ -828,7 +840,7 @@
       }
 
       if (hardwareFpsValue.options.length == 0) {
-        const fpsValues = [0.25, 0.5, 1, 2, 4, 8, 16, 32];
+        const fpsValues = [0.25, 0.5, 1, 2, 4, 8];
         fpsValues.forEach((fps) => {
           hardwareFpsValue.options[hardwareFpsValue.options.length] =
             new Option(fps + " FPS", fps);

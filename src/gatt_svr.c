@@ -21,88 +21,51 @@
 #include <stdio.h>
 #include <string.h>
 #include "esp_sleep.h"
-#include "host/ble_hs.h"
-#include "host/ble_uuid.h"
+#include "bleprph.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 #include "services/bas/ble_svc_bas.h"
-#include "bleprph.h"
+#include "services/dis/ble_svc_dis.h"
 #include "led_indicator.h"
 #include "prefs.h"
 
-/*** Maximum number of characteristics with the notify flag ***/
-#define MAX_NOTIFY 5
+#define MAX_CONNS 5
 #define TAG_GATT_SVR "GATT_SVR"
 
 static const ble_uuid128_t gatt_svr_svc_cam_uuid = GATT_SVR_SVC_CAM_UUID;
 
 ble_uuid128_t gatt_svr_temps_frame_chr_uuid = GATT_SVR_CHR_TEMPS_FRAME_UUID;
-ble_uuid128_t gatt_svr_status_chr_uuid = GATT_SVR_CHR_STATUS_UUID;
-
-static const char *manuf_name = DEVICE_NAME;
-static const char *model_num = DEVICE_NAME;
 
 uint16_t gatt_svr_chr_temps_frame_val_handle;
-uint16_t gatt_svr_chr_status_val_handle;
-
-time_t last_status_notify_time = 0;
 
 QueueHandle_t temps_frame_queue;
 QueueHandle_t status_queue;
 // declare large var on stack, to avoid heap depletion
 float temps_frames[MAX_Q_ITEMS][NUM_TEMPS_PIXELS];
+uint16_t conn_handles[MAX_CONNS];
 uint8_t last_refresh_rate = 2;
 
 /* Characteristic User Description */
 static const ble_uuid128_t gatt_svr_temps_frame_fps_desc_uuid = GATT_SVR_TEMPS_FRAME_FPS_DESC_UUID;
 static const ble_uuid16_t gatt_svr_usr_dsc_uuid = GATT_SVR_USR_DESC_UUID;
-static const ble_uuid16_t gatt_svr_manufacturer_name_uuid = GATT_MANUFACTURER_NAME_UUID;
-static const ble_uuid16_t gatt_svr_model_number_uuid = GATT_MODEL_NUMBER_UUID;
-static const ble_uuid16_t gatt_svr_device_info_svc_uuid = GATT_DEVICE_INFO_UUID;
-
-static int gatt_svr_chr_access_device_info(uint16_t conn_handle, uint16_t attr_handle,
-                                           struct ble_gatt_access_ctxt *ctxt, void *arg);
 
 static int gatt_svc_access(uint16_t conn_handle, uint16_t attr_handle,
                            struct ble_gatt_access_ctxt *ctxt, void *arg);
 
-static const struct ble_gatt_chr_def ble_gatt_chr_device_info[] = {
-    {
-        /* Characteristic: * Manufacturer name */
-        .uuid = &gatt_svr_manufacturer_name_uuid.u,
-        .access_cb = gatt_svr_chr_access_device_info,
-        .flags = BLE_GATT_CHR_F_READ,
-    },
-    {
-        /* Characteristic: Model number string */
-        .uuid = &gatt_svr_model_number_uuid.u,
-        .access_cb = gatt_svr_chr_access_device_info,
-        .flags = BLE_GATT_CHR_F_READ,
-    },
-    {
-        0, /* No more characteristics in this service */
-    },
-};
-
 static const struct ble_gatt_chr_def ble_gatt_chr_cam[] = {{
-                                                               /*** This characteristic can be subscribed to by writing 0x00 and 0x01 to the CCCD ***/
                                                                .uuid = &gatt_svr_temps_frame_chr_uuid.u,
                                                                .access_cb = gatt_svc_access,
-                                                               .descriptors = (struct ble_gatt_dsc_def[]){{.uuid = &gatt_svr_usr_dsc_uuid.u, .att_flags = BLE_ATT_F_READ, .access_cb = gatt_svc_access, .arg = &gatt_svr_temps_frame_chr_uuid.u}, {.uuid = &gatt_svr_temps_frame_fps_desc_uuid.u, .att_flags = BLE_ATT_F_READ | BLE_ATT_ACCESS_OP_WRITE, .access_cb = gatt_svc_access, .arg = &gatt_svr_temps_frame_chr_uuid.u}, {
-                                                                                                                                                                                                                                                                                                                                                                                                                                     0, /* No more descriptors in this characteristic */
-                                                                                                                                                                                                                                                                                                                                                                                                                                 }},
+                                                               .descriptors = (struct ble_gatt_dsc_def[]){
+                                                                   {.uuid = &gatt_svr_usr_dsc_uuid.u,
+                                                                    .att_flags = BLE_ATT_F_READ,
+                                                                    .access_cb = gatt_svc_access,
+                                                                    .arg = &gatt_svr_temps_frame_chr_uuid.u},
+                                                                   {.uuid = &gatt_svr_temps_frame_fps_desc_uuid.u, .att_flags = BLE_ATT_F_READ | BLE_ATT_F_READ_ENC | BLE_ATT_F_WRITE | BLE_ATT_F_WRITE_ENC, .access_cb = gatt_svc_access, .arg = &gatt_svr_temps_frame_chr_uuid.u},
+                                                                   {
+                                                                       0, /* No more descriptors in this characteristic */
+                                                                   }},
                                                                .flags = BLE_GATT_CHR_F_NOTIFY,
                                                                .val_handle = &gatt_svr_chr_temps_frame_val_handle,
-                                                           },
-                                                           {
-                                                               /*** This characteristic can be subscribed to by writing 0x00 and 0x01 to the CCCD ***/
-                                                               .uuid = &gatt_svr_status_chr_uuid.u,
-                                                               .access_cb = gatt_svc_access,
-                                                               .descriptors = (struct ble_gatt_dsc_def[]){{.uuid = &gatt_svr_usr_dsc_uuid.u, .att_flags = BLE_ATT_F_READ, .access_cb = gatt_svc_access, .arg = &gatt_svr_status_chr_uuid.u}, {
-                                                                                                                                                                                                                                                 0, /* No more descriptors in this characteristic */
-                                                                                                                                                                                                                                             }},
-                                                               .flags = BLE_GATT_CHR_F_NOTIFY,
-                                                               .val_handle = &gatt_svr_chr_status_val_handle,
                                                            },
                                                            {
                                                                0, /* No more characteristics in this service. */
@@ -110,13 +73,7 @@ static const struct ble_gatt_chr_def ble_gatt_chr_cam[] = {{
 
 static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
     {
-        /* Service: Device Information */
-        .type = BLE_GATT_SVC_TYPE_PRIMARY,
-        .uuid = &gatt_svr_device_info_svc_uuid.u,
-        .characteristics = ble_gatt_chr_device_info,
-    },
-    {
-        /*** Service ***/
+        /* Camera Service */
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = &gatt_svr_svc_cam_uuid.u,
         .characteristics = ble_gatt_chr_cam,
@@ -188,8 +145,6 @@ static int gatt_svc_access(uint16_t conn_handle, uint16_t attr_handle,
             const char *desc_val;
             if (ble_uuid_cmp(chr_uuid, &gatt_svr_temps_frame_chr_uuid.u) == 0)
                 desc_val = "Temperatures Frame";
-            else if (ble_uuid_cmp(chr_uuid, &gatt_svr_status_chr_uuid.u) == 0)
-                desc_val = "Status";
             else
                 goto unknown;
 
@@ -211,8 +166,15 @@ static int gatt_svc_access(uint16_t conn_handle, uint16_t attr_handle,
         }
         else
         {
-            MODLOG_DFLT(DEBUG, "Descriptor read by NimBLE stack; attr_handle=%d\n",
-                        attr_handle);
+            struct ble_gap_conn_desc desc;
+            rc = ble_gap_conn_find(conn_handle, &desc);
+            if (rc != 0 || !(desc.sec_state.bonded && desc.sec_state.authenticated && desc.sec_state.encrypted))
+            {
+                MODLOG_DFLT(ERROR, "Unauthed client tried to write, ignoring\n");
+                return 0;
+            }
+
+            MODLOG_DFLT(DEBUG, "Descriptor read by NimBLE stack; attr_handle=%d\n", attr_handle);
         }
         uuid = ctxt->dsc->uuid;
         chr_uuid = (const ble_uuid_t *)arg;
@@ -240,37 +202,6 @@ unknown:
     MODLOG_DFLT(ERROR, "Unknown characteristic/descriptor/op; op=%d conn_handle=%d attr_handle=%d\n",
                 ctxt->op, conn_handle, attr_handle);
 
-    return BLE_ATT_ERR_UNLIKELY;
-}
-
-static int
-gatt_svr_chr_access_device_info(uint16_t conn_handle, uint16_t attr_handle,
-                                struct ble_gatt_access_ctxt *ctxt, void *arg)
-{
-    uint16_t uuid;
-    int rc;
-
-    uuid = ble_uuid_u16(ctxt->chr->uuid);
-
-    if (conn_handle != BLE_HS_CONN_HANDLE_NONE)
-    {
-        MODLOG_DFLT(INFO, "gatt_svr_chr_access_device_info; conn_handle=%d attr_handle=%d\n",
-                    conn_handle, attr_handle);
-    }
-
-    if (uuid == gatt_svr_model_number_uuid.value)
-    {
-        rc = os_mbuf_append(ctxt->om, model_num, strlen(model_num));
-        return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-    }
-
-    if (uuid == gatt_svr_manufacturer_name_uuid.value)
-    {
-        rc = os_mbuf_append(ctxt->om, manuf_name, strlen(manuf_name));
-        return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-    }
-
-    assert(0);
     return BLE_ATT_ERR_UNLIKELY;
 }
 
@@ -310,17 +241,18 @@ void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg)
 static void notify_task(void *arg)
 {
     uint8_t temps_frame_idx = 0;
-    struct status_t status;
-    char status_payload[64] = {0};                           /* Data payload */
-    uint8_t temps_payload[NUM_TEMPS_BYTES_PER_PACKET] = {0}; /* Data payload */
-    int16_t *part_seq = (int16_t *)temps_payload;
+    struct status_t last_status;
+    uint8_t payload[NUM_NOTIFY_BYTES_LAST_PACKET] = {0};
+    int16_t *part_seq = (int16_t *)payload;
     int16_t *part_data = part_seq + 1;
+    int part_data_idx;
+    uint16_t part_data_len;
     int rc;
     struct os_mbuf *om;
 
     while (1)
     {
-        if (!temps_frame_subscribed)
+        if (!at_least_one_subscribed())
         {
             vTaskDelay(500 / portTICK_PERIOD_MS);
             continue;
@@ -334,122 +266,163 @@ static void notify_task(void *arg)
             continue;
         }
 
-        /* Send the temps frame in NUM_TEMPS_PACKETS parts */
-
-        for (int16_t part = 0; part < NUM_TEMPS_PACKETS; part++)
+        // notify all conn_handles
+        for (int conn_handle_idx = 0; conn_handle_idx < MAX_CONNS; conn_handle_idx++)
         {
-            *part_seq = part;
-
-            // convert temps_frames[temps_frame_idx] (float32) to signed int16 and multiply by 100
-            // to retain 2 decimal places and reduce the payload size
-            for (int j = 0; j < NUM_TEMPS_PIXELS / NUM_TEMPS_PACKETS; j++)
-            {
-                part_data[j] = temps_frames[temps_frame_idx][part * NUM_TEMPS_PIXELS / NUM_TEMPS_PACKETS + j] * 100;
-            }
-
-            om = ble_hs_mbuf_from_flat(temps_payload, sizeof(temps_payload));
-            if (om == NULL)
-            {
-                /* Memory not available for mbuf */
-                ESP_LOGE(TAG_GATT_SVR, "No MBUFs available from pool, give up..");
+            if (conn_handles[conn_handle_idx] == BLE_HS_CONN_HANDLE_NONE)
                 continue;
-            }
 
-            rc = ble_gatts_notify_custom(conn_handle, gatt_svr_chr_temps_frame_val_handle, om);
+            uint16_t conn_handle = conn_handles[conn_handle_idx];
 
-            if (rc != 0)
+            /* Send the temps frame in NUM_NOTIFY_PACKETS parts */
+
+            for (int16_t part = 0; part < NUM_NOTIFY_PACKETS; part++)
             {
-                ESP_LOGE(TAG_GATT_SVR, "Error while sending notification; rc = %d", rc);
+                bool is_last_part = part == NUM_NOTIFY_PACKETS - 1;
 
-                if (!temps_frame_subscribed)
+                *part_seq = part;
+
+                // convert temps_frames[temps_frame_idx] (float32) to signed int16 and multiply by 100
+                // to retain 2 decimal places and reduce the payload size
+                for (part_data_idx = 0; part_data_idx < NUM_TEMPS_PIXELS / NUM_NOTIFY_PACKETS; part_data_idx++)
+                {
+                    part_data[part_data_idx] = temps_frames[temps_frame_idx][part * NUM_TEMPS_PIXELS / NUM_NOTIFY_PACKETS + part_data_idx] * 100;
+                }
+
+                if (is_last_part)
+                {
+                    // add status data to last packet
+                    xQueueReceive(status_queue, &last_status, 0); // do not wait
+
+                    part_data[part_data_idx++] = last_status.t_a * 100;
+                    part_data[part_data_idx++] = last_status.battery_voltage * 100;
+                    part_data[part_data_idx++] = last_status.free_heap_k * 100;
+
+                    part_data_len = NUM_NOTIFY_BYTES_LAST_PACKET;
+                }
+                else
+                {
+                    part_data_len = NUM_NOTIFY_BYTES_PER_PACKET;
+                }
+
+                om = ble_hs_mbuf_from_flat(payload, part_data_len);
+                if (om == NULL)
+                {
+                    /* Memory not available for mbuf */
+                    ESP_LOGE(TAG_GATT_SVR, "No MBUFs available from pool, removing connection handle %d", conn_handle);
+                    remove_notify_conn_handle(conn_handle);
                     continue;
+                }
 
-                // do not set if disconnected
-                if (rc != BLE_HS_ENOTCONN && conn_handle != BLE_HS_CONN_HANDLE_NONE)
-                    current_indicator_state = INDICATOR_TRANSFER_FALED;
+                rc = ble_gatts_notify_custom(conn_handle, gatt_svr_chr_temps_frame_val_handle, om);
 
-                // xSemaphoreGive(notify_sem);
-                /* Most probably error is because we ran out of mbufs (rc = 6),
-                 * increase the mbuf count/size from menuconfig. Though
-                 * inserting delay is not good solution let us keep it
-                 * simple for time being so that the mbufs get freed up
-                 * (?), of course assumption is we ran out of mbufs */
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                if (rc != 0)
+                {
+                    ESP_LOGE(TAG_GATT_SVR, "Error while sending notification; rc = %d", rc);
+
+                    if (!at_least_one_subscribed())
+                        continue;
+
+                    // do not set if disconnected
+                    if (rc != BLE_HS_ENOTCONN && conn_handle != BLE_HS_CONN_HANDLE_NONE)
+                        current_indicator_state = INDICATOR_TRANSFER_FALED;
+
+                    // xSemaphoreGive(notify_sem);
+                    /* Most probably error is because we ran out of mbufs (rc = 6),
+                     * increase the mbuf count/size from menuconfig. Though
+                     * inserting delay is not good solution let us keep it
+                     * simple for time being so that the mbufs get freed up
+                     * (?), of course assumption is we ran out of mbufs */
+                    vTaskDelay(1000 / portTICK_PERIOD_MS);
+                }
+                else
+                {
+                    current_indicator_state = INDICATOR_TRANSFER_SUCCESS;
+                }
             }
-            else
-            {
-                current_indicator_state = INDICATOR_TRANSFER_SUCCESS;
-            }
         }
-
-        // send status notification if needed
-        if (!status_subscribed)
-            continue;
-
-        if (xQueueReceive(status_queue, &status, 0) != pdTRUE) // do not wait
-        {
-            continue;
-        }
-
-        sprintf(status_payload, "Free heap:%.2fK | Battery:%.2fV | Ta: %.2f°C", status.free_heap_k, status.battery_voltage, status.t_a);
-
-        om = ble_hs_mbuf_from_flat(status_payload, strlen(status_payload));
-        if (om == NULL)
-        {
-            /* Memory not available for mbuf */
-            ESP_LOGE(TAG_GATT_SVR, "No MBUFs available from pool, skipping status notification.");
-            continue;
-        }
-
-        rc = ble_gatts_notify_custom(conn_handle, gatt_svr_chr_status_val_handle, om);
-
-        if (rc != 0)
-        {
-            ESP_LOGE(TAG_GATT_SVR, "Error while sending notification; rc = %d", rc);
-            /* Most probably error is because we ran out of mbufs (rc = 6),
-             * increase the mbuf count/size from menuconfig. Though
-             * inserting delay is not good solution let us keep it
-             * simple for time being so that the mbufs get freed up
-             * (?), of course assumption is we ran out of mbufs */
-        }
-
-        // lithium ion battery voltage range is 3.6V to 4.2V
-        uint8_t battery_level = (status.battery_voltage - 3.6) / (4.2 - 3.6) * 100;
-        ble_svc_bas_battery_level_set(battery_level);
     }
+}
+
+int set_battery_level(uint8_t battery_level)
+{
+    return ble_svc_bas_battery_level_set(battery_level);
+}
+
+void init_notify_conn_handles()
+{
+    for (int i = 0; i < MAX_CONNS; i++)
+    {
+        conn_handles[i] = BLE_HS_CONN_HANDLE_NONE;
+    }
+}
+
+bool add_notify_conn_handle(uint16_t conn_handle)
+{
+    for (int i = 0; i < MAX_CONNS; i++)
+    {
+        if (conn_handles[i] == BLE_HS_CONN_HANDLE_NONE)
+        {
+            conn_handles[i] = conn_handle;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool remove_notify_conn_handle(uint16_t conn_handle)
+{
+    for (int i = 0; i < MAX_CONNS; i++)
+    {
+        if (conn_handles[i] == conn_handle)
+        {
+            conn_handles[i] = BLE_HS_CONN_HANDLE_NONE;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool at_least_one_subscribed()
+{
+    for (int i = 0; i < MAX_CONNS; i++)
+    {
+        if (conn_handles[i] != BLE_HS_CONN_HANDLE_NONE)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 int gatt_svr_init(void)
 {
     int rc;
 
+    init_notify_conn_handles();
     ble_svc_gap_init();
     ble_svc_gatt_init();
     ble_svc_bas_init();
-    // ble_svc_dis_init();
+    ble_svc_dis_init();
 
-    // if (rc != 0)
-    // {
-    //     return rc;
-    // }
+    // windows implicitly queries DIS on bonding
 
-    // rc = ble_svc_dis_manufacturer_name_set("Melexis");
-    // if (rc != 0)
-    // {
-    //     return rc;
-    // }
-
-    // rc = ble_svc_dis_model_number_set("MLX90640");
-    // if (rc != 0)
-    // {
-    //     return rc;
-    // }
-
-    // rc = ble_svc_dis_serial_number_set("1234567890");
-    // if (rc != 0)
-    // {
-    //     return rc;
-    // }
+    ble_svc_dis_manufacturer_name_set(DEVICE_NAME);
+    ble_svc_dis_model_number_set("MLX90640");
+    ble_svc_dis_serial_number_set("1234567890");
+    ble_svc_dis_hardware_revision_set("1.0.0");
+    ble_svc_dis_firmware_revision_set("1.0.0");
+    ble_svc_dis_software_revision_set("1.0.0");
+    ble_svc_dis_system_id_set("1234567890");
+    const char pnp_val[7] = {
+        0x01,                                                                                    // 0x1=BT, 0x2=USB
+        DIS_COMPANY_IDENTIFIER_ESPRESSIF & 0xFF, (DIS_COMPANY_IDENTIFIER_ESPRESSIF >> 8) & 0xFF, // VID
+        DIS_PRODUCT_IDENTIFIER & 0xFF, (DIS_PRODUCT_IDENTIFIER >> 8) & 0xFF,                     // PID
+        DIS_PRODUCT_VERSION & 0xFF, (DIS_PRODUCT_VERSION >> 8) & 0xFF                            // VERSION
+    };
+    ble_svc_dis_pnp_id_set(pnp_val);
 
     rc = ble_gatts_count_cfg(gatt_svr_svcs);
     if (rc != 0)
@@ -462,11 +435,6 @@ int gatt_svr_init(void)
     {
         return rc;
     }
-
-    /* Create a counting semaphore for Notification. Can be used to track
-     * successful notification txmission. Optimistically take some big number
-     * for counting Semaphore */
-    // notify_sem = xSemaphoreCreateCounting(100, 0);
 
     /* Initialize Notify Task */
     xTaskCreate(notify_task, "notify_task", 4096, NULL, 10, NULL);

@@ -10,9 +10,6 @@
 #include <esp_bt.h>
 
 static SemaphoreHandle_t pair_button_semaphore;
-bool temps_frame_subscribed = false;
-bool status_subscribed = false;
-uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
 
 #if MYNEWT_VAL(BLE_POWER_CONTROL)
 static struct ble_gap_event_listener power_control_event_listener;
@@ -110,7 +107,7 @@ void bleprph_advertise(void)
     adv_params.itvl_min = BLE_GAP_ADV_ITVL;
     adv_params.itvl_max = BLE_GAP_ADV_ITVL;
 
-    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_N9);
+    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_N15);
 
     rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,
                            &adv_params, bleprph_gap_event, NULL);
@@ -119,8 +116,6 @@ void bleprph_advertise(void)
         MODLOG_DFLT(ERROR, "error enabling advertisement; rc=%d\n", rc);
         return;
     }
-
-    current_indicator_state = INDICATOR_BLE_ADVERTISING;
 }
 
 #if MYNEWT_VAL(BLE_POWER_CONTROL)
@@ -166,6 +161,29 @@ static int bleprph_gap_power_event(struct ble_gap_event *event, void *arg)
 }
 #endif
 
+void print_bonded_peers()
+{
+    int rc;
+    ble_addr_t out_peer_id_addrs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
+    int len = 0;
+    rc = ble_store_util_bonded_peers(out_peer_id_addrs, &len, MYNEWT_VAL(BLE_STORE_MAX_BONDS));
+
+    if (rc != 0)
+    {
+        MODLOG_DFLT(ERROR, "Failed to get bonded peers; rc=%d\n", rc);
+        return;
+    }
+
+    MODLOG_DFLT(INFO, "Bonded Peers: %d\n", len);
+
+    for (int i = 0; i < len; i++)
+    {
+        MODLOG_DFLT(INFO, "Bonded Peer: type=%d addr=0x", out_peer_id_addrs[i].type);
+        print_addr(out_peer_id_addrs[i].val);
+        MODLOG_DFLT(INFO, "\n");
+    }
+}
+
 /**
  * The nimble host executes this callback when a GAP event occurs.  The
  * application associates a GAP event callback with each connection that forms.
@@ -205,21 +223,8 @@ int bleprph_gap_event(struct ble_gap_event *event, void *arg)
             rc = ble_gap_conn_find(event->connect.conn_handle, &desc);
             assert(rc == 0);
             bleprph_print_conn_desc(&desc);
-
-            conn_handle = event->connect.conn_handle;
         }
         MODLOG_DFLT(INFO, "\n");
-
-        if (event->connect.status != 0)
-        {
-            conn_handle = BLE_HS_CONN_HANDLE_NONE;
-            /* Connection failed; resume advertising. */
-            bleprph_advertise();
-        }
-        else
-        {
-            current_indicator_state = INDICATOR_CONNECTED;
-        }
 
         rc = ble_hs_hci_util_set_data_len(event->connect.conn_handle,
                                           LL_PACKET_LENGTH,
@@ -233,22 +238,23 @@ int bleprph_gap_event(struct ble_gap_event *event, void *arg)
         bleprph_power_control(event->connect.conn_handle);
         ble_gap_event_listener_register(&power_control_event_listener,
                                         bleprph_gap_power_event, NULL);
-#else
-        MODLOG_DFLT(ERROR, "Power control not enabled");
 #endif
+
+        // keep advertising to accept more connections
+        bleprph_advertise();
         return 0;
 
     case BLE_GAP_EVENT_DISCONNECT:
-        conn_handle = BLE_HS_CONN_HANDLE_NONE;
-        temps_frame_subscribed = false;
-        status_subscribed = false;
+        remove_notify_conn_handle(event->disconnect.conn.conn_handle);
+        if (!at_least_one_subscribed())
+            current_indicator_state = INDICATOR_NOT_NOTIFYING;
 
         MODLOG_DFLT(INFO, "disconnect; reason=%d ", event->disconnect.reason);
         bleprph_print_conn_desc(&event->disconnect.conn);
         MODLOG_DFLT(INFO, "\n");
 
         /* Connection terminated; resume advertising. */
-        bleprph_advertise();
+        // bleprph_advertise();
         return 0;
 
     case BLE_GAP_EVENT_CONN_UPDATE:
@@ -264,15 +270,6 @@ int bleprph_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_ADV_COMPLETE:
         MODLOG_DFLT(INFO, "advertise complete; reason=%d",
                     event->adv_complete.reason);
-
-        if (event->adv_complete.reason == BLE_HS_ETIMEOUT)
-        {
-
-            fflush(stdout);
-            /* Advertising timed out; deep sleep. */
-            esp_deep_sleep_start();
-        }
-
         bleprph_advertise();
         return 0;
 
@@ -318,25 +315,29 @@ int bleprph_gap_event(struct ble_gap_event *event, void *arg)
                     event->subscribe.prev_indicate,
                     event->subscribe.cur_indicate);
 
-        // if (event->subscribe.cur_notify)
-        // {
-        //     rc = ble_gap_conn_find(event->connect.conn_handle, &desc);
-        //     bleprph_print_conn_desc(&desc);
-
-        //     if (rc != 0 || !(desc.sec_state.bonded && desc.sec_state.authenticated && desc.sec_state.encrypted))
-        //     {
-        //         MODLOG_DFLT(ERROR, "Unauthed client tried to subscribe");
-        //         return BLE_ERR_INSUFFICIENT_SEC;
-        //     }
-        // }
-
         if (event->subscribe.attr_handle == gatt_svr_chr_temps_frame_val_handle)
         {
-            temps_frame_subscribed = event->subscribe.cur_notify;
-        }
-        else if (event->subscribe.attr_handle == gatt_svr_chr_status_val_handle)
-        {
-            status_subscribed = event->subscribe.cur_notify;
+            if (event->subscribe.cur_notify)
+            {
+                rc = ble_gap_conn_find(event->subscribe.conn_handle, &desc);
+                if (rc != 0 || !(desc.sec_state.bonded && desc.sec_state.authenticated && desc.sec_state.encrypted))
+                {
+                    MODLOG_DFLT(ERROR, "Unauthed client tried to subscribe, disconnecting");
+                    // disconnect
+                    ble_gap_terminate(event->subscribe.conn_handle, BLE_ERR_CONN_TERM_LOCAL);
+                    return 0;
+                }
+
+                add_notify_conn_handle(event->subscribe.conn_handle);
+                current_indicator_state = INDICATOR_NOTIFYING;
+            }
+            else
+            {
+                remove_notify_conn_handle(event->subscribe.conn_handle);
+                // set the pair LED to off
+                if (!at_least_one_subscribed())
+                    current_indicator_state = INDICATOR_NOT_NOTIFYING;
+            }
         }
 
         return 0;
@@ -371,8 +372,6 @@ int bleprph_gap_event(struct ble_gap_event *event, void *arg)
 
     case BLE_GAP_EVENT_PASSKEY_ACTION:
 
-        MODLOG_DFLT(WARN, "BLE_GAP_EVENT_PASSKEY_ACTION");
-
         struct ble_sm_io pkey = {0};
 
         if (event->passkey.params.action == BLE_SM_IOACT_NUMCMP)
@@ -380,13 +379,13 @@ int bleprph_gap_event(struct ble_gap_event *event, void *arg)
             MODLOG_DFLT(WARN, "Passkey on device's display: %" PRIu32, event->passkey.params.numcmp);
 
             // set the pair LED to on
-            current_indicator_state = INDICATOR_BLE_BONDING_REQ;
+            current_indicator_state = INDICATOR_BONDING_REQ;
 
             // reset pair_button_semaphore, have to press the button after the passkey action is started
             xSemaphoreTake(pair_button_semaphore, 0);
 
             pkey.action = event->passkey.params.action;
-            if (xSemaphoreTake(pair_button_semaphore, PAIR_BUTTON_TIMEOUT) == pdTRUE)
+            if (xSemaphoreTake(pair_button_semaphore, PAIR_BUTTON_TIMEOUT / portTICK_PERIOD_MS) == pdTRUE)
             {
                 pkey.numcmp_accept = 1;
             }
@@ -402,8 +401,7 @@ int bleprph_gap_event(struct ble_gap_event *event, void *arg)
             MODLOG_DFLT(ERROR, "Passkey action not supported");
         }
 
-        // set the pair LED to off
-        current_indicator_state = INDICATOR_BLE_ADVERTISING;
+        current_indicator_state = INDICATOR_NOT_NOTIFYING;
 
         return 0;
 

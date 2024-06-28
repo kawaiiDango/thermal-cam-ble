@@ -22,6 +22,7 @@ void savePrefs()
     Preferences preferences;
 
     preferences.begin("preferences");
-    preferences.putUInt(PREF_REFRESH_RATE, prefs.refreshRate);
+    preferences.putFloat(PREF_REFRESH_RATE, prefs.refreshRate);
+    preferences.putUInt(PREF_LAST_RESET_REASON, prefs.lastResetReason);
     preferences.end();
 }
