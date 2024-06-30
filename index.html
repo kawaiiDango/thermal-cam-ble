@@ -32,12 +32,8 @@
         position: relative;
       }
 
-      #therm table {
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        width: 100%;
-        height: 36px;
+      #settings {
+        padding: 24px;
       }
 
       #imageContainer {
@@ -46,22 +42,28 @@
         margin-right: auto;
         position: relative;
         overflow: hidden;
-        width: 100%;
-        padding-top: calc(3 / 4 * 100%);
       }
 
-      #canvas,
-      #colorImage {
+      @media (orientation: portrait) {
+        #imageContainer {
+          width: 100%;
+          padding-top: calc(3 / 4 * 100% + 48px);
+        }
+      }
+
+      @media (orientation: landscape) {
+        #imageContainer {
+          width: calc(100% - 4 / 3 * 48px);
+          padding-top: calc(3 / 4 * 100%);
+        }
+      }
+
+      #canvas {
         position: absolute;
         top: 0;
         left: 0;
         width: 100%;
         height: 100%;
-        opacity: 1;
-      }
-
-      #colorImage {
-        transform: scale(1.1);
       }
 
       #status {
@@ -86,28 +88,10 @@
         text-align: center;
       }
 
-      #therm {
-        border-bottom: solid 1px #ddd;
-        padding-bottom: 2px;
-        height: 36px;
-        position: absolute;
-        width: 100%;
-        bottom: 18px;
-        left: 0;
-      }
-
       #rangeSetting {
         border-bottom: solid 1px #ddd;
         padding-bottom: 2px;
         margin-bottom: 5px;
-      }
-
-      table {
-        width: 100%;
-      }
-
-      #rangeTable {
-        height: 10px;
       }
 
       label {
@@ -131,14 +115,6 @@
 
       #maxTherm {
         color: red;
-      }
-
-      #marker {
-        position: absolute;
-        color: #fff;
-        text-shadow: 0 0 black;
-        font-size: 30px;
-        opacity: 0;
       }
 
       #status {
@@ -205,18 +181,7 @@
   <body>
     <div id="image">
       <div id="imageContainer">
-        <img id="colorImage" />
         <canvas id="canvas"></canvas>
-        <div id="marker">+</div>
-      </div>
-      <div id="therm">
-        <table border="0" cellspacing="0" cellpadding="0">
-          <tr id="valueTable"></tr>
-          <tr id="rangeTable"></tr>
-        </table>
-      </div>
-      <div class="center">
-        <span id="meterValue"></span>
       </div>
     </div>
     <div id="settings">
@@ -256,13 +221,27 @@
         /></label>
       </div>
       <div class="flex">
-        <label
-          >Adaptive<input
-            type="checkbox"
-            id="adaptiveValue"
-            checked
-            onchange="updateSettings()"
-        /></label>
+        <div class="flex flex-1 flex-c">
+          <label
+            >Adaptive<input
+              type="checkbox"
+              id="adaptiveValue"
+              checked
+              onchange="updateSettings()"
+          /></label>
+          <label
+            >Webcam<input
+              type="checkbox"
+              id="webcamEnabled"
+              onchange="updateSettings()"
+          /></label>
+          <label
+            >Average<input
+              type="checkbox"
+              id="avgValue"
+              onchange="updateSettings()"
+          /></label>
+        </div>
         <div class="flex flex-1 flex-c">
           <label
             >Palette<select
@@ -270,11 +249,8 @@
               onchange="updateSettings()"
             ></select
           ></label>
-          <label
-            >Fps<select id="hardwareFpsValue" onchange="setFpsValue()"></select
-            ><span id="fps"></span
-          ></label>
-
+          <label id="fpsLabel" for="hardwareFpsValue">Fps</label>
+          <select id="hardwareFpsValue" onchange="setFpsValue()"></select>
           <label
             ><span>Opacity <span id="opacitySetting"></span></span
             ><input
@@ -284,15 +260,10 @@
               max="100"
               step="5"
               value="100"
+              disabled
               oninput="updateSettings()"
           /></label>
         </div>
-        <label
-          >Average<input
-            type="checkbox"
-            id="avgValue"
-            onchange="updateSettings()"
-        /></label>
       </div>
       <div class="center">
         <button id="connectDisconnect">Connect</button>
@@ -307,6 +278,9 @@
       const sizeY = 24;
       const multiplier = 20;
       const numParts = 4;
+      const pixelRatio = Math.floor(window.devicePixelRatio || 1);
+      const valueTableFontSize = 12 * pixelRatio;
+      const markerFontSize = 15 * pixelRatio;
 
       let rangeMin = 20;
       let rangeMax = 40;
@@ -337,15 +311,15 @@
           stops: ["#FFFFFF", "#000000"],
         },
       ];
-      let currentPalette = null;
+      let currentPalette = palettes[0];
       let accumlator = [];
-      let avg = false;
+      let average = false;
       let imageLoading = false;
-      let metercoords = null;
+      let markerCoords = null;
       let mindistance = 10;
-
-      let frameCount = 0;
+      let lastFrameReceiveTime = 0;
       let opacity = 100;
+      let webcamEnabled = false;
 
       const tempsFrame = new Float32Array(sizeX * sizeY);
 
@@ -357,22 +331,21 @@
       const camFpsFloatDescUuid = "9c54c864-fe2e-4f5f-96c0-793147ec8094";
 
       //Global Variables to Handle Bluetooth
-      let bleServer;
-      let camFpsFloatDesc;
-      let bleServiceFound = false;
-      let tempsFrameCharacteristicFound = null;
+      let gattServer = null;
+      let camFpsFloatDesc = null;
+      let cameraService = null;
+      let tempsFrameCharacteristic = null;
+
+      // webcam variables
+      let videoFeed = null;
 
       // DOM elements
       const captureButton = document.getElementById("capture");
       const connectDisconnectButton =
         document.getElementById("connectDisconnect");
       const debugStatusContainer = document.getElementById("debugStatus");
-      const meterValueContainer = document.getElementById("meterValue");
-      const canvasElem = document.getElementById("canvas");
-      const marker = document.getElementById("marker");
-      const colorImageElem = document.getElementById("colorImage");
-      const fpsContainer = document.getElementById("fps");
-      const valueTableContainer = document.getElementById("valueTable");
+      const mainCanvasElem = document.getElementById("canvas");
+      const fpsLabelElem = document.getElementById("fpsLabel");
       const paletteValue = document.getElementById("paletteValue");
       const hardwareFpsValue = document.getElementById("hardwareFpsValue");
       const opacityValue = document.getElementById("opacityValue");
@@ -381,15 +354,23 @@
       const distanceValue = document.getElementById("distanceValue");
       const adaptiveValue = document.getElementById("adaptiveValue");
       const avgValue = document.getElementById("avgValue");
-      const rangeTableElement = document.getElementById("rangeTable");
       const opacitySetting = document.getElementById("opacitySetting");
-      const canvas = document.getElementById("canvas");
       const distanceContainer = document.getElementById("distanceContainer");
       const minContainer = document.getElementById("minContainer");
       const maxContainer = document.getElementById("maxContainer");
       const minSetting = document.getElementById("minSetting");
       const maxSetting = document.getElementById("maxSetting");
       const distanceSetting = document.getElementById("distanceSetting");
+      const webcamEnabledValue = document.getElementById("webcamEnabled");
+      const webcamVideoElem = document.createElement("video");
+      const thermCanvasElem = document.createElement("canvas");
+      const thermCtx = thermCanvasElem.getContext("2d", {
+        willReadFrequently: false,
+      });
+      const finalCanvasCtx = mainCanvasElem.getContext("2d", {
+        willReadFrequently: false,
+        alpha: false, // text anti-aliasing
+      });
 
       // functions
 
@@ -421,28 +402,27 @@
           });
 
           console.log("Device Selected:", device.name);
-          device.addEventListener("gattservicedisconnected", onDisconnected);
+          device.addEventListener("gattserverdisconnected", disconnectDevice);
 
-          const gattServer = await device.gatt.connect();
-          bleServer = gattServer;
+          gattServer = await device.gatt.connect();
           console.log("Connected to GATT Server");
 
-          const service = await bleServer.getPrimaryService(camServiceUuid);
-          bleServiceFound = service;
-          console.log("Service discovered:", service.uuid);
+          cameraService = await gattServer.getPrimaryService(camServiceUuid);
+          console.log("Service discovered:", cameraService.uuid);
 
-          const tempsFrameCharacteristic = await service.getCharacteristic(
+          tempsFrameCharacteristic = await cameraService.getCharacteristic(
             tempsFrameCharacteristicUuid
           );
 
-          tempsFrameCharacteristicFound = tempsFrameCharacteristic;
-          tempsFrameCharacteristicFound.addEventListener(
+          lastFrameReceiveTime = Date.now();
+
+          tempsFrameCharacteristic.addEventListener(
             "characteristicvaluechanged",
             handleTempsCharacteristicChange
           );
           console.log("Notifications Started.");
 
-          await tempsFrameCharacteristicFound.startNotifications();
+          await tempsFrameCharacteristic.startNotifications();
 
           camFpsFloatDesc = await tempsFrameCharacteristic.getDescriptor(
             camFpsFloatDescUuid
@@ -452,37 +432,43 @@
 
           connectDisconnectButton.innerHTML = "Disconnect";
           captureButton.style.display = "";
+
+          if (webcamEnabled) {
+            startWebcam();
+          }
         } catch (error) {
           debugStatusContainer.innerHTML = "Error: " + error;
           console.error("Error: ", error);
         }
       }
 
-      function onDisconnected(event) {
-        console.log("Device Disconnected:", event.target.device.name);
-        connectDisconnectButton.innerHTML = "Connect";
-        captureButton.style.display = "none";
-      }
-
       async function disconnectDevice() {
         console.log("Disconnect Device.");
-        if (bleServer && bleServer.connected) {
-          try {
-            if (tempsFrameCharacteristicFound) {
-              tempsFrameCharacteristicFound.stopNotifications();
-              tempsFrameCharacteristicFound.removeEventListener(
-                "characteristicvaluechanged",
-                handleTempsCharacteristicChange
-              );
-              tempsFrameCharacteristicFound = null;
-            }
 
+        if (tempsFrameCharacteristic && gattServer && gattServer.connected) {
+          try {
+            await tempsFrameCharacteristic.stopNotifications();
+          } catch (error) {
+            console.error("An error occurred:", error);
+          }
+          tempsFrameCharacteristic.removeEventListener(
+            "characteristicvaluechanged",
+            handleTempsCharacteristicChange
+          );
+          tempsFrameCharacteristic = null;
+        }
+
+        if (gattServer && gattServer.connected) {
+          try {
             console.log("Notifications Stopped");
-            bleServer.disconnect();
+            await gattServer.disconnect();
             console.log("Device Disconnected");
           } catch (error) {
-            console.log("An error occurred:", error);
+            console.error("An error occurred:", error);
           }
+          gattServer = null;
+          camFpsFloatDesc = null;
+          cameraService = null;
         } else {
           // Throw an error if Bluetooth is not connected
           debugStatusContainer.innerHTML = "Bluetooth is not connected.";
@@ -490,6 +476,10 @@
 
         connectDisconnectButton.innerHTML = "Connect";
         captureButton.style.display = "none";
+
+        if (videoFeed) {
+          stopWebcam();
+        }
       }
 
       function handleTempsCharacteristicChangeJustPrint(event) {
@@ -501,7 +491,6 @@
           console.error("Invalid sequence number: ", seq);
           return;
         }
-        // console.log("Seq: ", seq);
       }
 
       function handleTempsCharacteristicChange(event) {
@@ -513,7 +502,7 @@
           console.error("Invalid sequence number: ", seq);
           return;
         }
-        console.log("dataView.byteLength: ", dataView.byteLength);
+
         const temperaturesX100 = new Int16Array(
           dataView.buffer.slice(2, (sizeX * sizeY * 2) / numParts + 2)
         );
@@ -545,15 +534,23 @@
           //     float battery_voltage;
           //     float free_heap_k;
           // };
-          const statsText = `Ta: ${stats[0].toFixed(
-            2
-          )}°C, Battery: ${stats[1].toFixed(2)}V, Free Heap: ${stats[2].toFixed(
-            2
-          )}kB`;
+          const statsText = `Ta: ${
+            Math.round(stats[0] * 10) / 10
+          }°C<BR>Battery: ${Math.round(stats[1] * 100) / 100}V<BR>Free Heap: ${
+            Math.round(stats[2] * 100) / 100
+          }kB`;
+
           debugStatusContainer.innerHTML = statsText;
 
-          frameCount++;
-          if (avg) {
+          fpsLabelElem.innerText = `FPS: (${(
+            1000 /
+            (Date.now() - lastFrameReceiveTime)
+          ).toFixed(2)})`;
+          lastFrameReceiveTime = Date.now();
+
+          console.log("Frame received");
+
+          if (average) {
             if (accumlator == null || accumlator.length != tempsFrame.length) {
               accumlator = tempsFrame;
             } else {
@@ -561,45 +558,18 @@
                 accumlator[index] =
                   Math.round(((elem + tempsFrame[index]) / 2) * 10) / 10;
               });
-              drawCanvas(accumlator);
+              drawAllCanvases(accumlator);
             }
           } else {
-            drawCanvas(tempsFrame);
+            drawAllCanvases(tempsFrame);
           }
         }
       }
 
-      function drawCanvas(therm) {
-        if (therm == undefined) {
-          therm = accumlator;
-        }
-        if (therm.length != sizeX * sizeY) {
-          return;
-        }
-        const thermMin = Math.min(...therm);
-        const thermMax = Math.max(...therm);
-        const thermCenter = thermMin + (thermMax - thermMin) / 2;
-        let min = thermMin;
-        let max = thermMax;
-        if (thermMax - thermMin < mindistance) {
-          min = Math.round((thermCenter - mindistance / 2) * 10) / 10;
-          max = Math.round((thermCenter + mindistance / 2) * 10) / 10;
-        }
-        let meter = therm[(sizeY / 2) * sizeX + sizeX / 2];
-        if (metercoords) {
-          meter = therm[metercoords.y * sizeX + (sizeX - 1 - metercoords.x)];
-        }
-        meterValueContainer.innerText =
-          (metercoords != null ? "Marker: " : "Center: ") +
-          Math.round(meter * 10) / 10;
-        if (adaptiveRange) {
-          drawRangeTable(min, max);
-        } else {
-          drawRangeTable(rangeMin, rangeMax);
-        }
-        canvasElem.width = sizeX;
-        canvasElem.height = sizeY;
-        const ctx = canvasElem.getContext("2d", { willReadFrequently: true });
+      function drawThermCanvas(therm, min, max) {
+        const ctx = thermCtx;
+        thermCanvasElem.width = sizeX;
+        thermCanvasElem.height = sizeY;
         const canvasWidth = sizeX;
         const canvasHeight = sizeY;
         ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -609,15 +579,8 @@
         let thermCount = 0;
         for (var y = 0; y < sizeY; y++) {
           for (var x = 0; x < sizeX; x++) {
-            const val = map(
-              therm[thermCount],
-              adaptiveRange ? min : rangeMin,
-              adaptiveRange ? max : rangeMax,
-              0,
-              100
-            );
+            const val = map(therm[thermCount], min, max, 0, 100);
             const off = (y * id.width + (sizeX - 1 - x)) * 4;
-            // const off = (y * id.width + x) * 4; // Changed this line
 
             const color = getPaletteColor(val);
             pixels[off] = color.r;
@@ -630,6 +593,218 @@
         ctx.putImageData(id, 0, 0, 0, 0, sizeX, sizeY);
       }
 
+      function drawRangeLegend(min, max) {
+        const ctx = finalCanvasCtx;
+        const canvasWidth = mainCanvasElem.width;
+        const canvasHeight = mainCanvasElem.height;
+        const numStops = currentPalette.stops.length;
+
+        const segmentWidth = canvasWidth / numStops;
+
+        let valueTable = "";
+        const gradientHeight = 10 * pixelRatio; // Height of the gradient bar
+        const yPosValueTable =
+          canvasHeight - valueTableFontSize - markerFontSize - 5; // 5= add some space
+        const yPosGradient = yPosValueTable - 2 * gradientHeight; // Y position to start drawing the gradient bar
+
+        const gradient = ctx.createLinearGradient(
+          0,
+          yPosGradient,
+          mainCanvasElem.width,
+          yPosGradient
+        );
+
+        // Loop through each stop in the currentPalette and add it to the gradient
+        currentPalette.stops.forEach((color, index) => {
+          const position = index / (currentPalette.stops.length - 1);
+          gradient.addColorStop(position, color);
+        });
+
+        // Apply the gradient as fill style and draw the rectangle
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, yPosGradient, mainCanvasElem.width, gradientHeight);
+
+        // Draw the value table
+
+        ctx.font = `${valueTableFontSize}px Arial`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#bbb";
+
+        for (let i = 0; i <= numStops; i++) {
+          const value = min + ((max - min) / numStops) * i;
+          const roundedValue = Math.round(value * 10) / 10;
+          let xPos = (canvasWidth / numStops) * i;
+
+          // Measure text width
+          const textWidth = ctx.measureText(roundedValue.toString()).width;
+
+          // Adjust xPos for the first value
+          if (i === 0) {
+            xPos = Math.max(xPos, textWidth / 2);
+          }
+          // Adjust xPos for the last value
+          else if (i === numStops) {
+            xPos = Math.min(xPos, canvasWidth - textWidth / 2);
+          }
+
+          ctx.fillText(roundedValue.toString(), xPos, yPosValueTable);
+        }
+      }
+
+      function drawMarker(markerValue) {
+        const ctx = finalCanvasCtx;
+        const canvasWidth = mainCanvasElem.width;
+        const canvasHeight = mainCanvasElem.height;
+        const markerSize = 10 * pixelRatio;
+
+        ctx.font = `${markerFontSize}px Arial`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#ddd";
+
+        const text = `${markerCoords ? "Marker" : "Center"}: ${
+          Math.round(markerValue * 10) / 10
+        }°C`;
+
+        ctx.fillText(text, canvasWidth / 2, canvasHeight - markerFontSize);
+
+        if (markerCoords) {
+          const clickX = markerCoords.x;
+          const clickY = markerCoords.y;
+
+          // Configure shadow
+          ctx.shadowColor = "rgba(0, 0, 0, 0.5)"; // Shadow color with some transparency
+          ctx.shadowBlur = 4 * pixelRatio;
+          ctx.shadowOffsetX = 2 * pixelRatio;
+          ctx.shadowOffsetY = 2 * pixelRatio;
+
+          ctx.beginPath();
+          ctx.moveTo(clickX - markerSize, clickY); // Horizontal line left part
+          ctx.lineTo(clickX + markerSize, clickY); // Horizontal line right part
+          ctx.moveTo(clickX, clickY - markerSize); // Vertical line top part
+          ctx.lineTo(clickX, clickY + markerSize); // Vertical line bottom part
+          ctx.strokeStyle = "#0FF"; // Set the color of the crosshair
+          ctx.stroke();
+
+          // Reset shadow to default (no shadow) to avoid affecting other drawings
+          ctx.shadowColor = "transparent";
+          ctx.shadowBlur = 0;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 0;
+        }
+      }
+
+      function drawAllCanvases(therm) {
+        if (therm == undefined) {
+          therm = accumlator;
+        }
+        if (therm.length != sizeX * sizeY) {
+          return;
+        }
+
+        let min;
+        let max;
+
+        if (adaptiveRange) {
+          const thermMin = Math.min(...therm);
+          const thermMax = Math.max(...therm);
+          const thermCenter = thermMin + (thermMax - thermMin) / 2;
+          min = thermMin;
+          max = thermMax;
+          if (thermMax - thermMin < mindistance) {
+            min = Math.round((thermCenter - mindistance / 2) * 10) / 10;
+            max = Math.round((thermCenter + mindistance / 2) * 10) / 10;
+          }
+        } else {
+          min = rangeMin;
+          max = rangeMax;
+        }
+
+        drawThermCanvas(therm, min, max);
+
+        mainCanvasElem.width = mainCanvasElem.clientWidth * pixelRatio;
+        mainCanvasElem.height = mainCanvasElem.clientHeight * pixelRatio;
+
+        finalCanvasCtx.clearRect(
+          0,
+          0,
+          mainCanvasElem.width,
+          mainCanvasElem.height
+        );
+
+        // Draw the webcam image
+
+        if (videoFeed) {
+          // Calculate the target dimensions (4:3 aspect ratio)
+          let srcWidth = webcamVideoElem.videoWidth;
+          let srcHeight = webcamVideoElem.videoWidth * (3 / 4);
+
+          const videoFeedAspectRatio =
+            webcamVideoElem.videoWidth / webcamVideoElem.videoHeight;
+
+          let topOffset = 0;
+          let leftOffset = 0;
+          let zoomFactor = 1;
+
+          if (videoFeedAspectRatio < 4 / 3) {
+            // Video feed is taller than 4:3
+            // this is my phone
+
+            // these factors are chosen by trial and error
+            zoomFactor = 0.9;
+
+            topOffset = (webcamVideoElem.videoHeight - srcHeight) / 3; // crop this part
+          }
+
+          // Calculate destination offsets
+          const dstX = mainCanvasElem.width * (1 - zoomFactor + 0.1); // push a bit right
+          const dstY =
+            mainCanvasElem.width * (sizeY / sizeX) * (1 - zoomFactor); // push a bit down
+
+          finalCanvasCtx.drawImage(
+            webcamVideoElem,
+            leftOffset,
+            topOffset,
+            srcWidth,
+            srcHeight,
+            dstX,
+            dstY,
+            mainCanvasElem.width * zoomFactor, // Destination width (adjusted for zoom)
+            mainCanvasElem.width * (sizeY / sizeX) * zoomFactor // Destination height (adjusted for zoom)
+          );
+          finalCanvasCtx.globalAlpha = opacity / 100;
+        }
+
+        finalCanvasCtx.drawImage(
+          thermCanvasElem,
+          0,
+          0,
+          sizeX,
+          sizeY,
+          0,
+          0,
+          mainCanvasElem.width,
+          mainCanvasElem.width * (sizeY / sizeX)
+        );
+
+        finalCanvasCtx.globalAlpha = 1;
+
+        drawRangeLegend(min, max);
+
+        let markerValue;
+        if (markerCoords) {
+          markerValue =
+            therm[
+              markerCoords.yTherm * sizeX + (sizeX - 1 - markerCoords.xTherm)
+            ];
+        } else {
+          markerValue = therm[(sizeY / 2) * sizeX + sizeX / 2];
+        }
+
+        drawMarker(markerValue);
+      }
+
       async function readFpsValue() {
         // read from the device
         const data = await camFpsFloatDesc.readValue();
@@ -639,35 +814,50 @@
 
       async function setFpsValue() {
         // send to the device
-        fps = parseFloat(hardwareFpsValue.value);
+        console.log("Setting FPS to: ", hardwareFpsValue.value);
+        const fps = parseFloat(hardwareFpsValue.value);
         const data = new Float32Array([fps]);
         await camFpsFloatDesc.writeValue(data.buffer);
       }
 
-      function updateSettings() {
-        avg = avgValue.checked;
-        adaptiveRange = adaptiveValue.checked;
+      function stopWebcam() {
+        videoFeed.getTracks().forEach((track) => {
+          track.stop();
+        });
+        videoFeed = null;
+        webcamVideoElem.srcObject = null;
+        opacityValue.disabled = true;
+      }
 
-        if (
-          currentPalette != palettes[parseInt(paletteValue.value, 10)] ||
-          rangeTableElement.innerHTML.trim() == ""
-        ) {
-          currentPalette = palettes[parseInt(paletteValue.value, 10)];
-          let rangeTable =
-            '<td colspan="' +
-            currentPalette.stops.length +
-            '" style="background:linear-gradient(to right';
-          currentPalette.stops.forEach((stop) => {
-            rangeTable += "," + new Color(stop).asRgbCss();
+      async function startWebcam() {
+        try {
+          videoFeed = await navigator.mediaDevices.getUserMedia({
+            video: {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              frameRate: { ideal: Math.max(1, hardwareFpsValue.value) },
+              // rear camera, the thermal camera will be sttached to the back of the phone with a holder
+              facingMode: { ideal: "environment" },
+            },
+            audio: false,
           });
-          rangeTable += ')"></td>';
-          rangeTableElement.innerHTML = rangeTable;
+          webcamVideoElem.srcObject = videoFeed;
+          webcamVideoElem.play();
+
+          opacityValue.disabled = false;
+        } catch (error) {
+          console.error("Error: ", error);
         }
+      }
+
+      function updateSettings() {
+        average = avgValue.checked;
+        adaptiveRange = adaptiveValue.checked;
+        webcamEnabled = webcamEnabledValue.checked;
+        currentPalette = palettes[paletteValue.value];
 
         opacity = parseInt(opacityValue.value, 10);
         opacitySetting.innerText = opacity + "%";
-        canvas.style.opacity = opacity / 100;
-        rangeTableElement.style.opacity = opacity / 100;
 
         if (!adaptiveRange) {
           distanceContainer.style.display = "none";
@@ -686,19 +876,35 @@
           mindistance = parseInt(distanceValue.value, 10);
           distanceSetting.innerText = mindistance;
         }
+
+        // start/stop webcam if ble is connected
+
+        if (gattServer && gattServer.connected) {
+          if (webcamEnabled && !videoFeed) {
+            startWebcam();
+          } else if (!webcamEnabled && videoFeed) {
+            stopWebcam();
+          }
+        }
+
         saveSettings();
-        drawCanvas();
+        if (average) {
+          drawAllCanvases(accumlator);
+        } else {
+          drawAllCanvases(tempsFrame);
+        }
       }
 
       function saveSettings() {
         let saveObj = {
-          avg: avg,
-          adaptiveRange: adaptiveRange,
+          average,
+          adaptiveRange,
           currentPalette: palettes.indexOf(currentPalette),
-          opacity: opacity,
-          rangeMin: rangeMin,
-          rangeMax: rangeMax,
-          mindistance: mindistance,
+          opacity,
+          rangeMin,
+          rangeMax,
+          mindistance,
+          webcamEnabled,
         };
         localStorage.setItem("settings", JSON.stringify(saveObj));
       }
@@ -707,8 +913,9 @@
         let settings = localStorage.getItem("settings");
         if (settings != null) {
           settings = JSON.parse(settings);
-          avgValue.checked = settings.avg;
+          avgValue.checked = settings.average;
           adaptiveValue.checked = settings.adaptiveRange;
+          webcamEnabledValue.checked = settings.webcamEnabled;
 
           if (palettes.length > settings.currentPalette) {
             currentPalette = palettes[settings.currentPalette];
@@ -755,47 +962,57 @@
         );
       }
 
-      function setMeter(event) {
-        metercoords = {
-          x: Math.round(map(event.x, 0, canvasElem.clientWidth, 0, sizeX)),
-          y: Math.round(map(event.y, 0, canvasElem.clientHeight, 0, sizeY)),
-        };
-        marker.style.top =
-          metercoords.y * (canvasElem.clientHeight / sizeY) - 15 + "px";
-        marker.style.left =
-          metercoords.x * (canvasElem.clientWidth / sizeX) - 15 + "px";
-        marker.style.opacity = 1;
-      }
-
-      function drawRangeTable(min, max) {
-        let valueTable = "";
-        for (let i = 0; i < currentPalette.stops.length; i++) {
-          var value = 0;
-          value =
-            Math.round(
-              (min + ((max - min) / currentPalette.stops.length) * i) * 10
-            ) / 10;
-          valueTable +=
-            '<td style="width:' +
-            100 / currentPalette.stops.length +
-            '%">' +
-            value;
-          if (i == currentPalette.stops.length - 1) {
-            value =
-              Math.round(
-                (min + ((max - min) / currentPalette.stops.length) * (i + 1)) *
-                  10
-              ) / 10;
-            valueTable += '<span style="float:right">' + value + "</span>";
-          }
-          valueTable += "</td>";
+      function getEventOffset(event) {
+        if (event.touches) {
+          // For touch events
+          const rect = event.target.getBoundingClientRect();
+          const touch = event.touches[0];
+          return {
+            offsetX: touch.pageX - rect.left - window.scrollX,
+            offsetY: touch.pageY - rect.top - window.scrollY,
+          };
+        } else {
+          // For mouse events
+          return {
+            offsetX: event.offsetX,
+            offsetY: event.offsetY,
+          };
         }
-        valueTableContainer.innerHTML = valueTable;
       }
 
-      function writeFPS() {
-        fpsContainer.innerText = "Actual: " + frameCount;
-        frameCount = 0;
+      function setMarker(event) {
+        const { offsetX, offsetY } = getEventOffset(event);
+        const xTherm = Math.round(
+          map(offsetX, 0, mainCanvasElem.clientWidth, 0, sizeX)
+        );
+        const yTherm = Math.round(
+          map(
+            offsetY,
+            0,
+            mainCanvasElem.clientWidth * (sizeY / sizeX),
+            0,
+            sizeY
+          )
+        );
+
+        // check of out of bounds
+
+        if (xTherm < 0 || xTherm >= sizeX || yTherm < 0 || yTherm >= sizeY) {
+          markerCoords = null;
+        } else {
+          markerCoords = {
+            x: offsetX * pixelRatio,
+            y: offsetY * pixelRatio,
+            xTherm,
+            yTherm,
+          };
+        }
+
+        if (average) {
+          drawAllCanvases(accumlator);
+        } else {
+          drawAllCanvases(tempsFrame);
+        }
       }
 
       function generateFileName() {
@@ -809,8 +1026,8 @@
         return `THERMAL_${year}${month}${day}_${hours}${minutes}${seconds}.jpg`;
       }
 
-      function captureTherm() {
-        const canvasUrl = canvasElem.toDataURL("image/jpeg", 0.85);
+      function captureCanvas() {
+        const canvasUrl = mainCanvasElem.toDataURL("image/jpeg", 0.9);
         const link = document.createElement("a");
         link.href = canvasUrl;
         link.download = generateFileName();
@@ -820,18 +1037,42 @@
 
       // DOM setup
 
-      captureButton.addEventListener("click", captureTherm);
+      captureButton.addEventListener("click", captureCanvas);
       connectDisconnectButton.addEventListener("click", connectDisconnect);
 
-      canvasElem.addEventListener("click", setMeter);
-      marker.addEventListener("click", () => {
-        metercoords = null;
-        marker.style.opacity = 0;
+      mainCanvasElem.addEventListener("click", setMarker);
+
+      mainCanvasElem.addEventListener("mousedown", (e) => {
+        mainCanvasElem.addEventListener("mousemove", setMarker);
+      });
+      mainCanvasElem.addEventListener("mouseup", () => {
+        mainCanvasElem.removeEventListener("mousemove", setMarker);
       });
 
+      // Touch event listeners
+      mainCanvasElem.addEventListener(
+        "touchstart",
+        (e) => {
+          e.preventDefault(); // Prevents the default action to allow touchmove to work
+          setMarker(e); // Use the first touch point
+        },
+        { passive: false }
+      );
+
+      mainCanvasElem.addEventListener(
+        "touchmove",
+        (e) => {
+          e.preventDefault(); // Prevent scrolling/zooming action
+          setMarker(e); // Use the first touch point
+        },
+        { passive: false }
+      );
+
+      // mainCanvasElem.addEventListener("touchend", (e) => {
+      // No need to remove the touchmove listener, it's automatically "removed" after touchend
+      // });
+
       captureButton.style.display = "none";
-      colorImageElem.width = sizeX * multiplier;
-      colorImageElem.height = sizeY * multiplier;
 
       if (paletteValue.options.length != palettes.length) {
         palettes.forEach((pal, index) => {
@@ -851,8 +1092,6 @@
 
       loadSettings();
       updateSettings();
-      drawCanvas();
-      setInterval(writeFPS, 1000);
     </script>
   </body>
 </html>
