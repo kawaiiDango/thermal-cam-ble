@@ -9,48 +9,70 @@
 #include <esp_err.h>
 #include <esp_pm.h>
 #include "led_indicator.h"
+#include "adc_stuff.h"
+#include <esp_sleep.h>
+#include <nimble/nimble_port.h>
 
 #define TAG_MAIN "main"
 
 Adafruit_MLX90640 mlx;
 unsigned long timeit_t1 = 0;
 bool mlx_inited = false;
+RTC_DATA_ATTR int boot_count = 0;
+
+int64_t rtcMillis()
+{
+  timeval currentTime;
+  gettimeofday(&currentTime, NULL);
+  int64_t milliseconds = (int64_t)currentTime.tv_sec * 1000L + (int64_t)currentTime.tv_usec / 1000L;
+  return milliseconds;
+}
 
 void timeit(const char *msg)
 {
-  unsigned long timeit_t2 = millis();
+  unsigned long timeit_t2 = rtcMillis();
   ESP_LOGI(TAG_MAIN, "\n%s: %ld\n", msg, timeit_t2 - timeit_t1);
   timeit_t1 = timeit_t2;
 }
 
-float pollBatteryVoltage()
+void go_to_deep_sleep()
 {
-  float v = 0;
-  int rounds = 10;
+  gpio_hold_dis((gpio_num_t)THERMAL_CAM_POWER_PIN);
+  digitalWrite(THERMAL_CAM_POWER_PIN, LOW);
+  gpio_hold_en((gpio_num_t)THERMAL_CAM_POWER_PIN);
 
-  for (int i = 0; i < rounds; i++)
+  nimble_port_stop();
+  btStop();
+  fflush(stdout);
+  // set pair button pin as the wake up source
+  // nvm, Not an RTC IO: GPIO9
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+  esp_deep_sleep_start();
+}
+
+float battery_voltage_read_and_set_level()
+{
+  float battery_voltage = battery_voltage_read();
+  // init it again later otherwise it continues to show a constant max value for future reads
+  // and also consumes power?
+  adc_deinit();
+
+  if (battery_voltage < 3.6)
   {
-    v += (float)analogReadMilliVolts(BATTERY_VOLTAGE_PIN) * 2 / 1000;
+    ESP_LOGE(TAG_MAIN, "Battery voltage is too low: %.2fV", battery_voltage);
+    go_to_deep_sleep();
   }
 
-  v /= rounds;
-
-  if (v < 3.6)
-  {
-    ESP_LOGE(TAG_MAIN, "Battery voltage is too low: %.2fV", v);
-    Serial.flush();
-    esp_deep_sleep_start();
-  }
-  // lithium ion battery voltage range is 3.6V to 4.2V
-  uint8_t battery_level = (v - 3.6) / (4.2 - 3.6) * 100;
+  float battery_level = (battery_voltage - 3.6) / (4.2 - 3.6) * 100;
   set_battery_level(battery_level);
-
-  return v;
+  return battery_voltage;
 }
 
 void init_mlx()
 {
+  gpio_hold_dis((gpio_num_t)THERMAL_CAM_POWER_PIN);
   digitalWrite(THERMAL_CAM_POWER_PIN, HIGH);
+  gpio_hold_en((gpio_num_t)THERMAL_CAM_POWER_PIN);
 
   Wire.begin(THERMAL_CAM_SDA_PIN, THERMAL_CAM_SCL_PIN, 400000);
 
@@ -63,8 +85,7 @@ void init_mlx()
   if (!mlx_inited)
   {
     ESP_LOGE(TAG_MAIN, "MLX90640 not found");
-    Serial.flush();
-    esp_deep_sleep_start();
+    go_to_deep_sleep();
   }
   else
   {
@@ -75,15 +96,12 @@ void init_mlx()
 
 void setup_io()
 {
-  Serial.begin(115200);
-
   initFromPrefs();
 
   if (esp_reset_reason() == ESP_RST_BROWNOUT && prefs.lastResetReason == ESP_RST_BROWNOUT)
   {
     ESP_LOGE(TAG_MAIN, "Repeated brownouts, going to sleep");
-    Serial.flush();
-    esp_deep_sleep_start();
+    go_to_deep_sleep();
   }
 
   esp_reset_reason_t resetReason = esp_reset_reason();
@@ -93,8 +111,6 @@ void setup_io()
     savePrefs();
   }
 
-  pinMode(BATTERY_VOLTAGE_PIN, INPUT);
-
   // from datasheet
   // "Except for GPIO12 and GPIO13 whose default drive strength is 40 mA, the default drive strength for all the other pins is 20 mA."
   // for the MLX90640, "Supply Current IDD 15 20 25 mA"
@@ -103,6 +119,8 @@ void setup_io()
   // Changed my mind, I put a MOSFET in there now, getting constant 3.26V
   pinMode(THERMAL_CAM_POWER_PIN, OUTPUT);
   gpio_set_drive_capability((gpio_num_t)THERMAL_CAM_POWER_PIN, GPIO_DRIVE_CAP_0);
+  digitalWrite(THERMAL_CAM_POWER_PIN, LOW);
+  gpio_hold_en((gpio_num_t)THERMAL_CAM_POWER_PIN);
 }
 
 void cam_read_loop(void *pvParameters)
@@ -116,24 +134,25 @@ void cam_read_loop(void *pvParameters)
 
   while (1)
   {
-    now = millis();
+    now = rtcMillis();
 
     if (!at_least_one_subscribed())
     {
-      delay (1000);
+      delay(1000);
 
       if (now - last_temps_notify > CAM_IDLE_TIMEOUT && mlx_inited)
       {
         ESP_LOGI(TAG_MAIN, "No one is subscribed to temps frame, powering off the camera");
+        gpio_hold_dis((gpio_num_t)THERMAL_CAM_POWER_PIN);
         digitalWrite(THERMAL_CAM_POWER_PIN, LOW);
+        gpio_hold_en((gpio_num_t)THERMAL_CAM_POWER_PIN);
         mlx_inited = false;
       }
 
       if (now - last_temps_notify > BLE_IDLE_TIMEOUT)
       {
         ESP_LOGI(TAG_MAIN, "No one is subscribed to temps frame, deep sleeping");
-        fflush(stdout);
-        esp_deep_sleep_start();
+        go_to_deep_sleep();
       }
 
       continue;
@@ -163,7 +182,7 @@ void cam_read_loop(void *pvParameters)
     }
 
     // timeit("ignore");
-    int res = mlx.getFrame((float *)temps_frames[temperatures_frame_arr_idx]);
+    int res = mlx.getFrame(temps_frames[temperatures_frame_arr_idx]);
 
     if (res != 0)
     {
@@ -179,19 +198,22 @@ void cam_read_loop(void *pvParameters)
       vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 
-    last_temps_notify = millis();
+    last_temps_notify = rtcMillis();
 
     temperatures_frame_arr_idx = (temperatures_frame_arr_idx + 1) % MAX_Q_ITEMS;
 
     // update status every STATUS_UPDATE_ITVL ms
 
-    if ((millis() - last_status_notify) > STATUS_UPDATE_ITVL)
+    if ((rtcMillis() - last_status_notify) > STATUS_UPDATE_ITVL)
     {
-      last_status_notify = millis();
+      last_status_notify = rtcMillis();
+      float battery_voltage = battery_voltage_read_and_set_level();
+      float free_heap_k = (float)ESP.getFreeHeap() / 1024;
+
       status = {
           .t_a = mlx.getTa(false),
-          .battery_voltage = (float)pollBatteryVoltage(),
-          .free_heap_k = (float)ESP.getFreeHeap() / 1024};
+          .battery_voltage = battery_voltage,
+          .free_heap_k = free_heap_k};
 
       if (xQueueSend(status_queue, &status, 0) != pdTRUE)
       {
@@ -200,7 +222,7 @@ void cam_read_loop(void *pvParameters)
     }
 
     // delay for (refresh rate) - time taken to get frame
-    long timeLeft = (long)(1000.0f / last_hardware_refresh_rate) - (millis() - now);
+    long timeLeft = (long)(1000.0f / last_hardware_refresh_rate) - (rtcMillis() - now);
 
     if (timeLeft > 0)
     {
@@ -244,10 +266,19 @@ static void temps_frame_mock_produce(void *arg)
 
 extern "C" void app_main(void)
 {
+  // init queues
+  temps_frame_queue = xQueueCreate(MAX_Q_ITEMS, sizeof(uint8_t));
+  status_queue = xQueueCreate(1, sizeof(struct status_t));
+
+  boot_count++;
+
   esp_log_level_set(TAG_MAIN, ESP_LOG_INFO);
   esp_log_level_set(TAG_PREFS, ESP_LOG_INFO);
 
-  // delay(1000);
+#ifdef DEBUG_MODE
+  delay(1000); // wait for serial monitor to reconnect before printing
+  ESP_LOGI(TAG_MAIN, "Boot count: %d", boot_count);
+#endif
 
   /* Initialize NVS — it is used to store PHY calibration data */
   esp_err_t ret = nvs_flash_init();
@@ -263,30 +294,26 @@ extern "C" void app_main(void)
   // maximum and minimum frequencies are set in sdkconfig,
   // automatic light sleep is enabled if tickless idle support is enabled.
   esp_pm_config_t pm_config = {
-      .max_freq_mhz = 80,
-      .min_freq_mhz = 10,
+      .max_freq_mhz = MAX_FREQ_MHZ,
+      .min_freq_mhz = MIN_FREQ_MHZ,
 #if CONFIG_FREERTOS_USE_TICKLESS_IDLE
-  // couldnt get ble to work with this
-  // .light_sleep_enable = true
+#ifndef DEBUG_MODE
+      .light_sleep_enable = true
+#endif
 #endif
   };
   ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
 #endif // CONFIG_PM_ENABLE
 
-  setup_io();
+  // set battery % and sleep forever if battery loo low
+  battery_voltage_read_and_set_level();
 
-  // init queues
-  temps_frame_queue = xQueueCreate(MAX_Q_ITEMS, sizeof(uint8_t));
-  status_queue = xQueueCreate(1, sizeof(struct status_t));
+  setup_io();
 
   // Initialize BLE
   bt_host_init();
   bt_io_init();
 
-  pollBatteryVoltage(); // set battery % and sleep forever if battery loo low
-
   xTaskCreate(indicator_task, "indicator_task", 2048, NULL, 1, NULL);
-  // start reading the camera
   xTaskCreate(cam_read_loop, "cam_read_loop", 2048 + 1024, NULL, 5, NULL);
-  // xTaskCreate(temps_frame_mock_produce, "temps_frame_mock_produce", 4096, NULL, 5, NULL);
 }

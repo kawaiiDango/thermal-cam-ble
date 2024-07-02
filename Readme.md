@@ -10,7 +10,7 @@ The crappy MLX90640 thermal camera connected to an ESP32-C6 that sends frames ov
 - An N-channel logic-level MOSFET to power the camera programmaticaly
 - I2C pull-up resistors
 - 0.1uF and 10uF decoupling capacitors
-- A holder to attach the device to a phone?
+- A holder to attach the device to a phone
 
 ## Pin assignments
 
@@ -20,4 +20,7 @@ See (config.h)[src/config.h] for the pin assignments.
 - Pair the device. Confirm pairing by pressing the button at the PAIR_BUTTON_PIN. It needs to be paired in order to read the frames.
 - Host (index.html)[index.html] somewhere in a secure context (file:// also seems to work).
 - Open the page in a Chromium-based browser.
+
+## Credits
 - The web interface is based on (doct0r0710/Esp32ThermalCam)(https://github.com/doct0r0710/Esp32ThermalCam/blob/main/index.html)
+- The MLX90640 driver [adafruit/Adafruit_MLX90640](https://github.com/adafruit/Adafruit_MLX90640)

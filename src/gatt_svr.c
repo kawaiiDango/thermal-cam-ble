@@ -29,7 +29,7 @@
 #include "led_indicator.h"
 #include "prefs.h"
 
-#define MAX_CONNS 5
+#define MAX_CONNS MYNEWT_VAL(BLE_MAX_CONNECTIONS)
 #define TAG_GATT_SVR "GATT_SVR"
 
 static const ble_uuid128_t gatt_svr_svc_cam_uuid = GATT_SVR_SVC_CAM_UUID;
