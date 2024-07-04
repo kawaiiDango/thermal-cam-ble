@@ -230,15 +230,15 @@
               onchange="updateSettings()"
           /></label>
           <label
-            >Webcam<input
-              type="checkbox"
-              id="webcamEnabled"
-              onchange="updateSettings()"
-          /></label>
-          <label
             >Average<input
               type="checkbox"
               id="avgValue"
+              onchange="updateSettings()"
+          /></label>
+          <label
+            >Webcam<input
+              type="checkbox"
+              id="webcamEnabled"
               onchange="updateSettings()"
           /></label>
         </div>
@@ -267,6 +267,8 @@
       </div>
       <div class="center">
         <button id="connectDisconnect">Connect</button>
+      </div>
+      <div class="center">
         <button id="capture">Capture</button>
       </div>
       <div id="status">
@@ -331,10 +333,11 @@
       const camFpsFloatDescUuid = "9c54c864-fe2e-4f5f-96c0-793147ec8094";
 
       //Global Variables to Handle Bluetooth
+      let bleDevice = null;
       let gattServer = null;
       let camFpsFloatDesc = null;
-      let cameraService = null;
       let tempsFrameCharacteristic = null;
+      let watchAdvAbortController = null;
 
       // webcam variables
       let videoFeed = null;
@@ -343,7 +346,7 @@
       const captureButton = document.getElementById("capture");
       const connectDisconnectButton =
         document.getElementById("connectDisconnect");
-      const debugStatusContainer = document.getElementById("debugStatus");
+      const statusContainer = document.getElementById("debugStatus");
       const mainCanvasElem = document.getElementById("canvas");
       const fpsLabelElem = document.getElementById("fpsLabel");
       const paletteValue = document.getElementById("paletteValue");
@@ -374,41 +377,52 @@
 
       // functions
 
-      function connectDisconnect() {
+      async function connectDisconnect() {
         if (!navigator.bluetooth) {
-          debugStatusContainer.innerHTML =
+          statusContainer.innerHTML =
             "Web Bluetooth API is not available in this browser!";
           return;
         }
 
         if (connectDisconnectButton.innerHTML === "Connect") {
-          connectToDevice();
+          if (bleDevice) {
+            autoConnect(bleDevice);
+          } else {
+            showDeviceChooser();
+          }
         } else {
           disconnectDevice();
         }
       }
 
-      async function connectToDevice() {
-        try {
-          const device = await navigator.bluetooth.requestDevice({
-            filters: [
-              {
-                name: deviceName,
-                // services: [gapServiceUuid]
-              },
-            ],
-            // acceptAllDevices : true,
-            optionalServices: [camServiceUuid],
-          });
+      async function showDeviceChooser() {
+        bleDevice = await navigator.bluetooth.requestDevice({
+          filters: [
+            {
+              name: deviceName,
+              // services: [gapServiceUuid]
+            },
+          ],
+          // acceptAllDevices : true,
+          optionalServices: [camServiceUuid],
+        });
 
-          console.log("Device Selected:", device.name);
+        connectToDevice(bleDevice);
+      }
+
+      async function connectToDevice(device) {
+        try {
+          if (watchAdvAbortController) watchAdvAbortController.abort();
+
+          bleDevice = device;
           device.addEventListener("gattserverdisconnected", disconnectDevice);
 
           gattServer = await device.gatt.connect();
           console.log("Connected to GATT Server");
 
-          cameraService = await gattServer.getPrimaryService(camServiceUuid);
-          console.log("Service discovered:", cameraService.uuid);
+          const cameraService = await gattServer.getPrimaryService(
+            camServiceUuid
+          );
 
           tempsFrameCharacteristic = await cameraService.getCharacteristic(
             tempsFrameCharacteristicUuid
@@ -437,30 +451,92 @@
             startWebcam();
           }
         } catch (error) {
-          debugStatusContainer.innerHTML = "Error: " + error;
+          statusContainer.innerHTML = "Error: " + error;
           console.error("Error: ", error);
         }
       }
 
-      async function disconnectDevice() {
+      async function autoConnectSetup() {
+        try {
+          const devices = await navigator.bluetooth.getDevices();
+          console.log("devices:", devices);
+          const thermalCamDevice = devices.find(
+            (device) => device.name === deviceName
+          );
+
+          if (thermalCamDevice) {
+            thermalCamDevice.addEventListener(
+              "advertisementreceived",
+              (event) => {
+                connectToDevice(event.device);
+              }
+            );
+          }
+
+          autoConnect(thermalCamDevice);
+
+          return true;
+        } catch (error) {
+          // feature is probably not enabled
+          // try to enable chrome://flags/#enable-experimental-web-platform-features
+          statusContainer.innerHTML =
+            "Try to enable chrome://flags/#enable-experimental-web-platform-features";
+          console.error("Error: ", error);
+
+          return false;
+        }
+      }
+
+      async function autoConnect(device) {
+        watchAdvAbortController = new AbortController();
+        await device.watchAdvertisements({
+          signal: watchAdvAbortController.signal,
+        });
+
+        statusContainer.innerHTML = `Auto connecting to ${deviceName}...`;
+      }
+
+      async function disconnectDevice(event) {
+        if (watchAdvAbortController) watchAdvAbortController.abort();
+
+        try {
+          bleDevice.removeEventListener(
+            "gattserverdisconnected",
+            disconnectDevice
+          );
+        } catch (error) {
+          console.error("An error occurred:", error);
+        }
+
+        // auto reconnect if event is undefined
+
+        if (event) {
+          const thatDevice = bleDevice;
+
+          setTimeout(() => {
+            autoConnect(thatDevice);
+          }, 1000);
+        }
+
         console.log("Disconnect Device.");
 
-        if (tempsFrameCharacteristic && gattServer && gattServer.connected) {
-          try {
-            await tempsFrameCharacteristic.stopNotifications();
-          } catch (error) {
-            console.error("An error occurred:", error);
-          }
+        if (tempsFrameCharacteristic) {
           tempsFrameCharacteristic.removeEventListener(
             "characteristicvaluechanged",
             handleTempsCharacteristicChange
           );
+          try {
+            console.log("Notifications Stopped");
+            await tempsFrameCharacteristic.stopNotifications();
+          } catch (error) {
+            console.error("An error occurred:", error);
+          }
+
           tempsFrameCharacteristic = null;
         }
 
         if (gattServer && gattServer.connected) {
           try {
-            console.log("Notifications Stopped");
             await gattServer.disconnect();
             console.log("Device Disconnected");
           } catch (error) {
@@ -468,10 +544,9 @@
           }
           gattServer = null;
           camFpsFloatDesc = null;
-          cameraService = null;
         } else {
           // Throw an error if Bluetooth is not connected
-          debugStatusContainer.innerHTML = "Bluetooth is not connected.";
+          statusContainer.innerHTML = "Bluetooth is not connected.";
         }
 
         connectDisconnectButton.innerHTML = "Connect";
@@ -540,7 +615,7 @@
             Math.round(stats[2] * 100) / 100
           }kB`;
 
-          debugStatusContainer.innerHTML = statsText;
+          statusContainer.innerHTML = statsText;
 
           fpsLabelElem.innerText = `FPS: (${(
             1000 /
@@ -1092,6 +1167,7 @@
 
       loadSettings();
       updateSettings();
+      autoConnectSetup();
     </script>
   </body>
 </html>
