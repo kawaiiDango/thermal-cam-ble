@@ -8,6 +8,7 @@
 #include <esp_sleep.h>
 #include "led_indicator.h"
 #include <esp_bt.h>
+#include "services/bas/ble_svc_bas.h"
 
 static SemaphoreHandle_t pair_button_semaphore;
 
@@ -82,12 +83,12 @@ void bleprph_advertise(void)
     fields.name_len = strlen(name);
     fields.name_is_complete = 1;
 
-    // fields.uuids16 = (ble_uuid16_t[]){
-    //     GATT_SVR_ADV_SVC_UUID,
-    // };
+    fields.uuids16 = (ble_uuid16_t[]){
+        BLE_UUID16_INIT(BLE_SVC_BAS_UUID16),
+    };
 
-    // fields.num_uuids16 = 1;
-    // fields.uuids16_is_complete = 1;
+    fields.num_uuids16 = 1;
+    fields.uuids16_is_complete = 1;
 
     fields.appearance = ADV_APPEARANCE;
     fields.appearance_is_present = 1;
@@ -212,18 +213,31 @@ int bleprph_gap_event(struct ble_gap_event *event, void *arg)
                     event->connect.status == 0 ? "established" : "failed",
                     event->connect.status);
 
-        rc = ble_att_set_preferred_mtu(PREFERRED_MTU_VALUE);
-        if (rc != 0)
-        {
-            MODLOG_DFLT(ERROR, "Failed to set preferred MTU; rc = %d", rc);
-        }
-
         if (event->connect.status == 0)
         {
             rc = ble_gap_conn_find(event->connect.conn_handle, &desc);
             assert(rc == 0);
             bleprph_print_conn_desc(&desc);
         }
+        else
+            return 0;
+
+        if (!desc.sec_state.bonded && !desc.sec_state.encrypted)
+        {
+            rc = ble_gap_security_initiate(event->connect.conn_handle);
+
+            if (rc != 0)
+            {
+                MODLOG_DFLT(ERROR, "Failed to initiate security, rc=%d", rc);
+            }
+        }
+
+        rc = ble_att_set_preferred_mtu(BLE_ATT_MTU_MAX);
+        if (rc != 0)
+        {
+            MODLOG_DFLT(ERROR, "Failed to set preferred MTU; rc = %d", rc);
+        }
+
         MODLOG_DFLT(INFO, "\n");
 
         rc = ble_hs_hci_util_set_data_len(event->connect.conn_handle,
@@ -231,7 +245,7 @@ int bleprph_gap_event(struct ble_gap_event *event, void *arg)
                                           LL_PACKET_TIME);
         if (rc != 0)
         {
-            MODLOG_DFLT(ERROR, "Set packet length failed");
+            MODLOG_DFLT(ERROR, "Set packet length failed, rc=%d", rc);
         }
 
 #if MYNEWT_VAL(BLE_POWER_CONTROL)
@@ -242,6 +256,12 @@ int bleprph_gap_event(struct ble_gap_event *event, void *arg)
 
         // keep advertising to accept more connections
         bleprph_advertise();
+        return 0;
+
+    case BLE_GAP_EVENT_CONN_UPDATE_REQ:
+        struct ble_gap_upd_params peer_params = *event->conn_update_req.peer_params;
+        peer_params.itvl_min = 12;
+        *event->conn_update_req.self_params = peer_params;
         return 0;
 
     case BLE_GAP_EVENT_DISCONNECT:
@@ -270,7 +290,9 @@ int bleprph_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_ADV_COMPLETE:
         MODLOG_DFLT(INFO, "advertise complete; reason=%d",
                     event->adv_complete.reason);
-        bleprph_advertise();
+
+        if (bt_inited)
+            bleprph_advertise();
         return 0;
 
     case BLE_GAP_EVENT_ENC_CHANGE:
@@ -315,19 +337,22 @@ int bleprph_gap_event(struct ble_gap_event *event, void *arg)
                     event->subscribe.prev_indicate,
                     event->subscribe.cur_indicate);
 
+        rc = ble_gap_conn_find(event->subscribe.conn_handle, &desc);
+
+        if (!desc.sec_state.bonded && !desc.sec_state.encrypted)
+        {
+            rc = ble_gap_security_initiate(event->subscribe.conn_handle);
+
+            if (rc != 0)
+            {
+                MODLOG_DFLT(ERROR, "Failed to initiate security, rc=%d", rc);
+            }
+            return BLE_ERR_UNSUPPORTED;
+        }
         if (event->subscribe.attr_handle == gatt_svr_chr_temps_frame_val_handle)
         {
             if (event->subscribe.cur_notify)
             {
-                rc = ble_gap_conn_find(event->subscribe.conn_handle, &desc);
-                if (rc != 0 || !(desc.sec_state.bonded && desc.sec_state.authenticated && desc.sec_state.encrypted))
-                {
-                    MODLOG_DFLT(ERROR, "Unauthed client tried to subscribe, disconnecting");
-                    // disconnect
-                    ble_gap_terminate(event->subscribe.conn_handle, BLE_ERR_CONN_TERM_LOCAL);
-                    return 0;
-                }
-
                 add_notify_conn_handle(event->subscribe.conn_handle);
                 current_indicator_state = INDICATOR_NOTIFYING;
             }

@@ -35,8 +35,12 @@
 static const ble_uuid128_t gatt_svr_svc_cam_uuid = GATT_SVR_SVC_CAM_UUID;
 
 ble_uuid128_t gatt_svr_temps_frame_chr_uuid = GATT_SVR_CHR_TEMPS_FRAME_UUID;
+ble_uuid128_t gatt_svr_test_chr_uuid = GATT_SVR_CHR_TEST_UUID;
 
 uint16_t gatt_svr_chr_temps_frame_val_handle;
+uint16_t gatt_svr_chr_test_val_handle;
+
+long test_val = 0;
 
 QueueHandle_t temps_frame_queue;
 QueueHandle_t status_queue;
@@ -52,31 +56,40 @@ static const ble_uuid16_t gatt_svr_usr_dsc_uuid = GATT_SVR_USR_DESC_UUID;
 static int gatt_svc_access(uint16_t conn_handle, uint16_t attr_handle,
                            struct ble_gatt_access_ctxt *ctxt, void *arg);
 
-static const struct ble_gatt_chr_def ble_gatt_chr_cam[] = {{
-                                                               .uuid = &gatt_svr_temps_frame_chr_uuid.u,
-                                                               .access_cb = gatt_svc_access,
-                                                               .descriptors = (struct ble_gatt_dsc_def[]){
-                                                                   {.uuid = &gatt_svr_usr_dsc_uuid.u,
-                                                                    .att_flags = BLE_ATT_F_READ,
-                                                                    .access_cb = gatt_svc_access,
-                                                                    .arg = &gatt_svr_temps_frame_chr_uuid.u},
-                                                                   {.uuid = &gatt_svr_temps_frame_fps_desc_uuid.u, .att_flags = BLE_ATT_F_READ | BLE_ATT_F_READ_ENC | BLE_ATT_F_WRITE | BLE_ATT_F_WRITE_ENC, .access_cb = gatt_svc_access, .arg = &gatt_svr_temps_frame_chr_uuid.u},
-                                                                   {
-                                                                       0, /* No more descriptors in this characteristic */
-                                                                   }},
-                                                               .flags = BLE_GATT_CHR_F_NOTIFY,
-                                                               .val_handle = &gatt_svr_chr_temps_frame_val_handle,
-                                                           },
-                                                           {
-                                                               0, /* No more characteristics in this service. */
-                                                           }};
+static int gatt_svc_test_access(uint16_t conn_handle, uint16_t attr_handle,
+                                struct ble_gatt_access_ctxt *ctxt,
+                                void *arg);
 
 static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
     {
         /* Camera Service */
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = &gatt_svr_svc_cam_uuid.u,
-        .characteristics = ble_gatt_chr_cam,
+        .characteristics = (struct ble_gatt_chr_def[]){{
+                                                           .uuid = &gatt_svr_temps_frame_chr_uuid.u,
+                                                           .access_cb = gatt_svc_access,
+                                                           .descriptors = (struct ble_gatt_dsc_def[]){
+                                                               {.uuid = &gatt_svr_usr_dsc_uuid.u,
+                                                                .att_flags = BLE_ATT_F_READ,
+                                                                .access_cb = gatt_svc_access,
+                                                                .arg = &gatt_svr_temps_frame_chr_uuid.u},
+                                                               {.uuid = &gatt_svr_temps_frame_fps_desc_uuid.u, .att_flags = BLE_ATT_F_READ | BLE_ATT_F_WRITE, .access_cb = gatt_svc_access, .arg = &gatt_svr_temps_frame_chr_uuid.u},
+                                                               {
+                                                                   0, /* No more descriptors in this characteristic */
+                                                               }},
+                                                           .flags = BLE_GATT_CHR_F_NOTIFY,
+                                                           .val_handle = &gatt_svr_chr_temps_frame_val_handle,
+                                                       },
+                                                       {
+                                                           .uuid = &gatt_svr_test_chr_uuid.u,
+                                                           .access_cb = gatt_svc_test_access,
+                                                           .descriptors = NULL,
+                                                           .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ,
+                                                           .val_handle = &gatt_svr_chr_test_val_handle,
+                                                       },
+                                                       {
+                                                           0, /* No more characteristics in this service. */
+                                                       }},
     },
 
     {
@@ -161,20 +174,20 @@ static int gatt_svc_access(uint16_t conn_handle, uint16_t attr_handle,
     case BLE_GATT_ACCESS_OP_WRITE_DSC:
         if (conn_handle != BLE_HS_CONN_HANDLE_NONE)
         {
-            MODLOG_DFLT(INFO, "Descriptor read; conn_handle=%d attr_handle=%d\n",
+            MODLOG_DFLT(INFO, "Descriptor write; conn_handle=%d attr_handle=%d\n",
                         conn_handle, attr_handle);
         }
         else
         {
             struct ble_gap_conn_desc desc;
             rc = ble_gap_conn_find(conn_handle, &desc);
-            if (rc != 0 || !(desc.sec_state.bonded && desc.sec_state.authenticated && desc.sec_state.encrypted))
+            if (rc != 0 || !(desc.sec_state.bonded && desc.sec_state.encrypted))
             {
                 MODLOG_DFLT(ERROR, "Unauthed client tried to write, ignoring\n");
                 return 0;
             }
 
-            MODLOG_DFLT(DEBUG, "Descriptor read by NimBLE stack; attr_handle=%d\n", attr_handle);
+            MODLOG_DFLT(DEBUG, "Descriptor write by NimBLE stack; attr_handle=%d\n", attr_handle);
         }
         uuid = ctxt->dsc->uuid;
         chr_uuid = (const ble_uuid_t *)arg;
@@ -203,6 +216,39 @@ unknown:
                 ctxt->op, conn_handle, attr_handle);
 
     return BLE_ATT_ERR_UNLIKELY;
+}
+
+static int gatt_svc_test_access(uint16_t conn_handle, uint16_t attr_handle,
+                                struct ble_gatt_access_ctxt *ctxt,
+                                void *arg)
+{
+    bool is_test_chr = ble_uuid_cmp(ctxt->chr->uuid, &gatt_svr_test_chr_uuid.u) == 0;
+    int rc;
+
+    if (is_test_chr)
+    {
+        assert(ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR);
+
+        rc = os_mbuf_append(ctxt->om, &test_val,
+                            sizeof test_val);
+        return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
+    else
+    {
+        assert(0);
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+}
+
+void test_notify_task(void *pvParameters)
+{
+    while (1)
+    {
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        test_val = random();
+
+        ble_gatts_chr_updated(gatt_svr_chr_test_val_handle);
+    }
 }
 
 void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg)
@@ -318,13 +364,16 @@ static void notify_task(void *arg)
 
                 if (rc != 0)
                 {
-                    ESP_LOGE(TAG_GATT_SVR, "Error while sending notification; rc = %d", rc);
+                    ESP_LOGE(TAG_GATT_SVR, "Error sending notification; rc = %d", rc);
 
                     if (!at_least_one_subscribed())
                         continue;
 
+                    if (rc == BLE_HS_ENOTCONN || rc == BLE_HS_EREJECT)
+                        remove_notify_conn_handle(conn_handle);
+
                     // do not set if disconnected
-                    if (rc != BLE_HS_ENOTCONN && conn_handle != BLE_HS_CONN_HANDLE_NONE)
+                    if (conn_handle != BLE_HS_CONN_HANDLE_NONE)
                         current_indicator_state = INDICATOR_TRANSFER_FALED;
 
                     // xSemaphoreGive(notify_sem);
@@ -359,6 +408,12 @@ void init_notify_conn_handles()
 
 bool add_notify_conn_handle(uint16_t conn_handle)
 {
+    for (int i = 0; i < MAX_CONNS; i++)
+    {
+        if (conn_handles[i] == conn_handle)
+            return true;
+    }
+
     for (int i = 0; i < MAX_CONNS; i++)
     {
         if (conn_handles[i] == BLE_HS_CONN_HANDLE_NONE)
@@ -438,6 +493,7 @@ int gatt_svr_init(void)
 
     /* Initialize Notify Task */
     xTaskCreate(notify_task, "notify_task", 4096, NULL, 10, NULL);
+    xTaskCreate(test_notify_task, "test_notify_task", 2048, NULL, 3, NULL);
 
     return 0;
 }

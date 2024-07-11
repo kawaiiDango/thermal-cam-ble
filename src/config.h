@@ -16,7 +16,6 @@
 #define BLE_GAP_ADV_ITVL 800     // 1s
 #define LL_PACKET_TIME 2120
 #define LL_PACKET_LENGTH 251
-#define PREFERRED_MTU_VALUE 512
 #define NUM_TEMPS_PIXELS 32 * 24
 #define NUM_BYTES_PER_PIXEL 2
 #define NUM_STATUS_ITEMS 3
@@ -27,5 +26,5 @@
 #define MAX_Q_ITEMS 4
 #define MAX_FREQ_MHZ 80
 #define MIN_FREQ_MHZ 10
-// #define DEBUG_MODE
+#define DEBUG_MODE
 #endif

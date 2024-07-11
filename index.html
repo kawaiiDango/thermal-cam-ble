@@ -26,6 +26,15 @@
         margin-top: 10px;
       }
 
+      .m-top {
+        margin-top: 10px;
+      }
+
+      .m-horizontal {
+        margin-left: 2%;
+        margin-right: 2%;
+      }
+
       #image,
       #settings {
         overflow: hidden;
@@ -66,11 +75,6 @@
         height: 100%;
       }
 
-      #status {
-        text-align: center;
-        font-family: "Courier New", Courier, monospace;
-      }
-
       .flex {
         display: flex;
         justify-content: space-between;
@@ -86,6 +90,10 @@
 
       .center {
         text-align: center;
+      }
+
+      .hide {
+        display: none;
       }
 
       #rangeSetting {
@@ -105,22 +113,6 @@
         width: 100%;
       }
 
-      #minTherm {
-        color: blue;
-      }
-
-      #centerTherm {
-        color: #ddd;
-      }
-
-      #maxTherm {
-        color: red;
-      }
-
-      #status {
-        margin-top: 50px;
-      }
-
       @media (orientation: landscape) {
         body {
           flex-direction: row;
@@ -136,7 +128,7 @@
 
     <script>
       Color = function (hexOrObject) {
-        var obj;
+        let obj;
         if (hexOrObject instanceof Object) {
           obj = hexOrObject;
         } else {
@@ -155,7 +147,7 @@
 
       var LinearColorInterpolator = {
         convertHexToRgb: function (hex) {
-          match = hex.replace(/#/, "").match(/.{1,2}/g);
+          const match = hex.replace(/#/, "").match(/.{1,2}/g);
           return new Color({
             r: parseInt(match[0], 16),
             g: parseInt(match[1], 16),
@@ -164,10 +156,10 @@
           });
         },
         findColorBetween: function (left, right, percentage) {
-          newColor = {};
-          components = ["r", "g", "b", "a"];
-          for (var i = 0; i < components.length; i++) {
-            c = components[i];
+          const newColor = {};
+          const components = ["r", "g", "b", "a"];
+          for (let i = 0; i < components.length; i++) {
+            const c = components[i];
             newColor[c] = Math.round(
               left[c] + ((right[c] - left[c]) * percentage) / 100
             );
@@ -259,10 +251,27 @@
               min="0"
               max="100"
               step="5"
-              value="100"
+              value="75"
               disabled
               oninput="updateSettings()"
           /></label>
+        </div>
+      </div>
+      <div class="flex hide" id="offsetContainer">
+        <div class="flex flex-1 m-horizontal">
+          <button id="offsetXMinus">-</button>
+          <span id="offsetX" class="m-top">X: </span>
+          <button id="offsetXPlus">+</button>
+        </div>
+        <div class="flex flex-1 m-horizontal">
+          <button id="offsetYMinus">-</button>
+          <span id="offsetY" class="m-top">Y:</span>
+          <button id="offsetYPlus">+</button>
+        </div>
+        <div class="flex flex-1 m-horizontal" style="vertical-align: middle">
+          <button id="scaleMinus">-</button>
+          <span id="scale" class="m-top">S:</span>
+          <button id="scalePlus">+</button>
         </div>
       </div>
       <div class="center">
@@ -271,7 +280,7 @@
       <div class="center">
         <button id="capture">Capture</button>
       </div>
-      <div id="status">
+      <div id="status" class="m-top center">
         <span id="debugStatus"></span>
       </div>
     </div>
@@ -320,8 +329,10 @@
       let markerCoords = null;
       let mindistance = 10;
       let lastFrameReceiveTime = 0;
-      let opacity = 100;
+      let opacity = 75;
       let webcamEnabled = false;
+      const offsetStep = 0.02;
+      const offset = { x: 0, y: 0, scale: 1 };
 
       const tempsFrame = new Float32Array(sizeX * sizeY);
 
@@ -365,6 +376,16 @@
       const maxSetting = document.getElementById("maxSetting");
       const distanceSetting = document.getElementById("distanceSetting");
       const webcamEnabledValue = document.getElementById("webcamEnabled");
+      const offsetContainer = document.getElementById("offsetContainer");
+      const offsetXSpan = document.getElementById("offsetX");
+      const offsetXMinus = document.getElementById("offsetXMinus");
+      const offsetXPlus = document.getElementById("offsetXPlus");
+      const offsetYSpan = document.getElementById("offsetY");
+      const offsetYMinus = document.getElementById("offsetYMinus");
+      const offsetYPlus = document.getElementById("offsetYPlus");
+      const scaleSpan = document.getElementById("scale");
+      const scaleMinus = document.getElementById("scaleMinus");
+      const scalePlus = document.getElementById("scalePlus");
       const webcamVideoElem = document.createElement("video");
       const thermCanvasElem = document.createElement("canvas");
       const thermCtx = thermCanvasElem.getContext("2d", {
@@ -377,6 +398,10 @@
 
       // functions
 
+      function pDelay(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
       async function connectDisconnect() {
         if (!navigator.bluetooth) {
           statusContainer.innerHTML =
@@ -385,9 +410,14 @@
         }
 
         if (connectDisconnectButton.innerHTML === "Connect") {
-          if (bleDevice) {
+          if (
+            bleDevice &&
+            watchAdvAbortController &&
+            watchAdvAbortController.signal.aborted
+          ) {
             autoConnect(bleDevice);
           } else {
+            // no saved device, or already auto connectinng, force show device chooser
             showDeviceChooser();
           }
         } else {
@@ -434,7 +464,6 @@
             "characteristicvaluechanged",
             handleTempsCharacteristicChange
           );
-          console.log("Notifications Started.");
 
           await tempsFrameCharacteristic.startNotifications();
 
@@ -442,10 +471,12 @@
             camFpsFloatDescUuid
           );
 
+          console.log("Notifications Started.");
+
           await readFpsValue();
 
           connectDisconnectButton.innerHTML = "Disconnect";
-          captureButton.style.display = "";
+          captureButton.classList.remove("hide");
 
           if (webcamEnabled) {
             startWebcam();
@@ -453,6 +484,7 @@
         } catch (error) {
           statusContainer.innerHTML = "Error: " + error;
           console.error("Error: ", error);
+          disconnectDevice();
         }
       }
 
@@ -471,19 +503,14 @@
                 connectToDevice(event.device);
               }
             );
+
+            autoConnect(thermalCamDevice);
           }
-
-          autoConnect(thermalCamDevice);
-
-          return true;
         } catch (error) {
           // feature is probably not enabled
-          // try to enable chrome://flags/#enable-experimental-web-platform-features
           statusContainer.innerHTML =
-            "Try to enable chrome://flags/#enable-experimental-web-platform-features";
+            "Try to enable chrome://flags/#enable-experimental-web-platform-features and chrome://flags/#enable-web-bluetooth-new-permissions-backend";
           console.error("Error: ", error);
-
-          return false;
         }
       }
 
@@ -497,6 +524,8 @@
       }
 
       async function disconnectDevice(event) {
+        statusContainer.innerHTML = "";
+
         if (watchAdvAbortController) watchAdvAbortController.abort();
 
         try {
@@ -508,17 +537,7 @@
           console.error("An error occurred:", error);
         }
 
-        // auto reconnect if event is undefined
-
-        if (event) {
-          const thatDevice = bleDevice;
-
-          setTimeout(() => {
-            autoConnect(thatDevice);
-          }, 1000);
-        }
-
-        console.log("Disconnect Device.");
+        console.log("Disconnect");
 
         if (tempsFrameCharacteristic) {
           tempsFrameCharacteristic.removeEventListener(
@@ -550,21 +569,16 @@
         }
 
         connectDisconnectButton.innerHTML = "Connect";
-        captureButton.style.display = "none";
+        captureButton.classList.add("hide");
 
         if (videoFeed) {
           stopWebcam();
         }
-      }
 
-      function handleTempsCharacteristicChangeJustPrint(event) {
-        const dataView = event.target.value;
-
-        const seq = new Int16Array(dataView.buffer.slice(0, 2))[0];
-
-        if (seq < 0 || seq >= numParts) {
-          console.error("Invalid sequence number: ", seq);
-          return;
+        // auto reconnect if event is undefined
+        if (event) {
+          await pDelay(2000);
+          autoConnect(bleDevice);
         }
       }
 
@@ -609,11 +623,9 @@
           //     float battery_voltage;
           //     float free_heap_k;
           // };
-          const statsText = `Ta: ${
-            Math.round(stats[0] * 10) / 10
-          }°C<BR>Battery: ${Math.round(stats[1] * 100) / 100}V<BR>Free Heap: ${
-            Math.round(stats[2] * 100) / 100
-          }kB`;
+          const statsText = `Ta: ${Math.round(stats[0] * 10) / 10}°C | Batt: ${
+            Math.round(stats[1] * 100) / 100
+          }V | Free: ${Math.round(stats[2] * 100) / 100}kB`;
 
           statusContainer.innerHTML = statsText;
 
@@ -770,6 +782,49 @@
         }
       }
 
+      function drawWebcamFrame() {
+        const videoFeedAspectRatio =
+          webcamVideoElem.videoWidth / webcamVideoElem.videoHeight;
+        const scale =
+          webcamVideoElem.videoWidth / offset.scale / mainCanvasElem.width;
+
+        const offsetX = -offset.x * mainCanvasElem.width;
+        const offsetY = -offset.y * mainCanvasElem.height;
+
+        const srcX = Math.max(0, offsetX * scale);
+        const srcY = Math.max(0, offsetY * scale);
+
+        const dstX = Math.max(0, -offsetX);
+        const dstY = Math.max(0, -offsetY);
+
+        const shiftX = Math.max(dstX * scale, srcX);
+        const shiftY = Math.max(dstY * scale, srcY);
+
+        const srcWidth = Math.min(
+          webcamVideoElem.videoWidth - shiftX,
+          mainCanvasElem.width * scale
+        );
+        const srcHeight = Math.min(
+          webcamVideoElem.videoHeight - shiftY,
+          mainCanvasElem.height * scale
+        );
+
+        const dstWidth = srcWidth / scale;
+        const dstHeight = srcHeight / scale;
+
+        finalCanvasCtx.drawImage(
+          webcamVideoElem,
+          srcX,
+          srcY,
+          srcWidth,
+          srcHeight,
+          dstX,
+          dstY,
+          dstWidth,
+          dstHeight
+        );
+      }
+
       function drawAllCanvases(therm) {
         if (therm == undefined) {
           therm = accumlator;
@@ -805,49 +860,13 @@
           0,
           0,
           mainCanvasElem.width,
-          mainCanvasElem.height
+          mainCanvasElem.width * (3 / 4)
         );
 
         // Draw the webcam image
 
         if (videoFeed) {
-          // Calculate the target dimensions (4:3 aspect ratio)
-          let srcWidth = webcamVideoElem.videoWidth;
-          let srcHeight = webcamVideoElem.videoWidth * (3 / 4);
-
-          const videoFeedAspectRatio =
-            webcamVideoElem.videoWidth / webcamVideoElem.videoHeight;
-
-          let topOffset = 0;
-          let leftOffset = 0;
-          let zoomFactor = 1;
-
-          if (videoFeedAspectRatio < 4 / 3) {
-            // Video feed is taller than 4:3
-            // this is my phone
-
-            // these factors are chosen by trial and error
-            zoomFactor = 0.9;
-
-            topOffset = (webcamVideoElem.videoHeight - srcHeight) / 3; // crop this part
-          }
-
-          // Calculate destination offsets
-          const dstX = mainCanvasElem.width * (1 - zoomFactor + 0.1); // push a bit right
-          const dstY =
-            mainCanvasElem.width * (sizeY / sizeX) * (1 - zoomFactor); // push a bit down
-
-          finalCanvasCtx.drawImage(
-            webcamVideoElem,
-            leftOffset,
-            topOffset,
-            srcWidth,
-            srcHeight,
-            dstX,
-            dstY,
-            mainCanvasElem.width * zoomFactor, // Destination width (adjusted for zoom)
-            mainCanvasElem.width * (sizeY / sizeX) * zoomFactor // Destination height (adjusted for zoom)
-          );
+          drawWebcamFrame();
           finalCanvasCtx.globalAlpha = opacity / 100;
         }
 
@@ -864,6 +883,15 @@
         );
 
         finalCanvasCtx.globalAlpha = 1;
+
+        // draw a black rect again, in case the webcam image overflows
+
+        finalCanvasCtx.clearRect(
+          0,
+          mainCanvasElem.width * (3 / 4) + 1,
+          mainCanvasElem.width,
+          mainCanvasElem.height
+        );
 
         drawRangeLegend(min, max);
 
@@ -902,6 +930,7 @@
         videoFeed = null;
         webcamVideoElem.srcObject = null;
         opacityValue.disabled = true;
+        offsetContainer.classList.add("hide");
       }
 
       async function startWebcam() {
@@ -911,7 +940,7 @@
               width: { ideal: 1280 },
               height: { ideal: 720 },
               frameRate: { ideal: Math.max(1, hardwareFpsValue.value) },
-              // rear camera, the thermal camera will be sttached to the back of the phone with a holder
+              // rear camera, the thermal camera will be attached to the back of the phone with a holder
               facingMode: { ideal: "environment" },
             },
             audio: false,
@@ -920,9 +949,39 @@
           webcamVideoElem.play();
 
           opacityValue.disabled = false;
+          offsetContainer.classList.remove("hide");
         } catch (error) {
           console.error("Error: ", error);
+          webcamEnabledValue.checked = false;
         }
+      }
+
+      function updateOffsets(offsetDelta) {
+        if (offsetDelta) {
+          if (offsetDelta.x)
+            offset.x = Math.min(Math.max(offsetDelta.x + offset.x, -10), 10);
+          if (offsetDelta.y)
+            offset.y = Math.min(Math.max(offsetDelta.y + offset.y, -10), 10);
+          if (offsetDelta.scale)
+            offset.scale = Math.min(
+              Math.max(offsetDelta.scale + offset.scale, 0.5),
+              2
+            );
+
+          saveSettings();
+
+          if (videoFeed) {
+            if (average) {
+              drawAllCanvases(accumlator);
+            } else {
+              drawAllCanvases(tempsFrame);
+            }
+          }
+        }
+
+        offsetXSpan.innerText = "X: " + offset.x.toFixed(2) + "%";
+        offsetYSpan.innerText = "Y: " + offset.y.toFixed(2) + "%";
+        scaleSpan.innerText = "S: " + offset.scale.toFixed(2);
       }
 
       function updateSettings() {
@@ -935,18 +994,18 @@
         opacitySetting.innerText = opacity + "%";
 
         if (!adaptiveRange) {
-          distanceContainer.style.display = "none";
-          minContainer.style.display = "inline-block";
-          maxContainer.style.display = "inline-block";
+          distanceContainer.classList.add("hide");
+          minContainer.classList.remove("hide");
+          maxContainer.classList.remove("hide");
 
           rangeMin = parseInt(minValue.value, 10);
           rangeMax = parseInt(maxValue.value, 10);
           minSetting.innerText = rangeMin;
           maxSetting.innerText = rangeMax;
         } else {
-          distanceContainer.style.display = "inline-block";
-          minContainer.style.display = "none";
-          maxContainer.style.display = "none";
+          distanceContainer.classList.remove("hide");
+          minContainer.classList.add("hide");
+          maxContainer.classList.add("hide");
 
           mindistance = parseInt(distanceValue.value, 10);
           distanceSetting.innerText = mindistance;
@@ -980,6 +1039,7 @@
           rangeMax,
           mindistance,
           webcamEnabled,
+          offset,
         };
         localStorage.setItem("settings", JSON.stringify(saveObj));
       }
@@ -1001,6 +1061,12 @@
           minValue.value = settings.rangeMin;
           maxValue.value = settings.rangeMax;
           distanceValue.value = settings.mindistance;
+
+          if (settings.offset) {
+            offset.x = settings.offset.x;
+            offset.y = settings.offset.y;
+            offset.scale = settings.offset.scale;
+          }
         }
       }
 
@@ -1117,6 +1183,29 @@
 
       mainCanvasElem.addEventListener("click", setMarker);
 
+      offsetXMinus.addEventListener("click", () => {
+        updateOffsets({ x: -offsetStep });
+      });
+      offsetXPlus.addEventListener("click", () => {
+        updateOffsets({ x: offsetStep });
+      });
+
+      offsetYMinus.addEventListener("click", () => {
+        updateOffsets({ y: -offsetStep });
+      });
+
+      offsetYPlus.addEventListener("click", () => {
+        updateOffsets({ y: offsetStep });
+      });
+
+      scaleMinus.addEventListener("click", () => {
+        updateOffsets({ scale: -offsetStep });
+      });
+
+      scalePlus.addEventListener("click", () => {
+        updateOffsets({ scale: offsetStep });
+      });
+
       mainCanvasElem.addEventListener("mousedown", (e) => {
         mainCanvasElem.addEventListener("mousemove", setMarker);
       });
@@ -1137,7 +1226,7 @@
       mainCanvasElem.addEventListener(
         "touchmove",
         (e) => {
-          e.preventDefault(); // Prevent scrolling/zooming action
+          e.preventDefault(); // Prevent scrolling/scaleing action
           setMarker(e); // Use the first touch point
         },
         { passive: false }
@@ -1147,7 +1236,7 @@
       // No need to remove the touchmove listener, it's automatically "removed" after touchend
       // });
 
-      captureButton.style.display = "none";
+      captureButton.classList.add("hide");
 
       if (paletteValue.options.length != palettes.length) {
         palettes.forEach((pal, index) => {
@@ -1167,6 +1256,7 @@
 
       loadSettings();
       updateSettings();
+      updateOffsets();
       autoConnectSetup();
     </script>
   </body>

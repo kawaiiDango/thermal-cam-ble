@@ -16,22 +16,16 @@
 #define TAG_MAIN "main"
 
 Adafruit_MLX90640 mlx;
-unsigned long timeit_t1 = 0;
+uint64_t timeit_t1 = 0;
 bool mlx_inited = false;
+bool bt_inited = false;
 RTC_DATA_ATTR int boot_count = 0;
-
-int64_t rtcMillis()
-{
-  timeval currentTime;
-  gettimeofday(&currentTime, NULL);
-  int64_t milliseconds = (int64_t)currentTime.tv_sec * 1000L + (int64_t)currentTime.tv_usec / 1000L;
-  return milliseconds;
-}
 
 void timeit(const char *msg)
 {
-  unsigned long timeit_t2 = rtcMillis();
-  ESP_LOGI(TAG_MAIN, "\n%s: %ld\n", msg, timeit_t2 - timeit_t1);
+  uint64_t timeit_t2 = millis();
+  int64_t time_diff = timeit_t2 - timeit_t1;
+  ESP_LOGI(TAG_MAIN, "\n%s: %llu\n", msg, time_diff);
   timeit_t1 = timeit_t2;
 }
 
@@ -41,6 +35,7 @@ void go_to_deep_sleep()
   digitalWrite(THERMAL_CAM_POWER_PIN, LOW);
   gpio_hold_en((gpio_num_t)THERMAL_CAM_POWER_PIN);
 
+  bt_inited = false;
   nimble_port_stop();
   btStop();
   fflush(stdout);
@@ -54,7 +49,7 @@ float battery_voltage_read_and_set_level()
 {
   float battery_voltage = battery_voltage_read();
   // init it again later otherwise it continues to show a constant max value for future reads
-  // and also consumes power?
+  // the next light sleep will deactivate the ADC
   adc_deinit();
 
   if (battery_voltage < 3.6)
@@ -128,19 +123,22 @@ void cam_read_loop(void *pvParameters)
   uint8_t temperatures_frame_arr_idx = 0;
   uint64_t last_status_notify = 0;
   uint64_t last_temps_notify = 0;
-  uint64_t now;
+  // signed cuz this sometimes becomes negative for some reason
+  int64_t time_diff = 0;
+  uint64_t frame_start_time;
   struct status_t status;
   float last_hardware_refresh_rate = -1.0f;
 
   while (1)
   {
-    now = rtcMillis();
+    frame_start_time = millis();
 
     if (!at_least_one_subscribed())
     {
       delay(1000);
+      time_diff = frame_start_time - last_temps_notify;
 
-      if (now - last_temps_notify > CAM_IDLE_TIMEOUT && mlx_inited)
+      if (time_diff > CAM_IDLE_TIMEOUT && mlx_inited)
       {
         ESP_LOGI(TAG_MAIN, "No one is subscribed to temps frame, powering off the camera");
         gpio_hold_dis((gpio_num_t)THERMAL_CAM_POWER_PIN);
@@ -149,7 +147,7 @@ void cam_read_loop(void *pvParameters)
         mlx_inited = false;
       }
 
-      if (now - last_temps_notify > BLE_IDLE_TIMEOUT)
+      if (time_diff > BLE_IDLE_TIMEOUT)
       {
         ESP_LOGI(TAG_MAIN, "No one is subscribed to temps frame, deep sleeping");
         go_to_deep_sleep();
@@ -163,12 +161,12 @@ void cam_read_loop(void *pvParameters)
       init_mlx();
       if (!mlx_inited)
       {
-        vTaskDelay(500 / portTICK_PERIOD_MS);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
         continue;
       }
 
-      last_hardware_refresh_rate = refreshRateToFps(mlx.getRefreshRate());
-      prefs.refreshRate = prefs.refreshRate;
+      mlx.setRefreshRate(fpsToRefreshRate(prefs.refreshRate));
+      last_hardware_refresh_rate = prefs.refreshRate;
     }
 
     if (last_hardware_refresh_rate != prefs.refreshRate)
@@ -198,15 +196,16 @@ void cam_read_loop(void *pvParameters)
       vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 
-    last_temps_notify = rtcMillis();
+    last_temps_notify = millis();
 
     temperatures_frame_arr_idx = (temperatures_frame_arr_idx + 1) % MAX_Q_ITEMS;
 
     // update status every STATUS_UPDATE_ITVL ms
 
-    if ((rtcMillis() - last_status_notify) > STATUS_UPDATE_ITVL)
+    time_diff = frame_start_time - last_status_notify;
+
+    if (time_diff > STATUS_UPDATE_ITVL)
     {
-      last_status_notify = rtcMillis();
       float battery_voltage = battery_voltage_read_and_set_level();
       float free_heap_k = (float)ESP.getFreeHeap() / 1024;
 
@@ -219,10 +218,12 @@ void cam_read_loop(void *pvParameters)
       {
         ESP_LOGE(TAG_MAIN, "Failed to send status to queue");
       }
+      last_status_notify = millis();
     }
 
     // delay for (refresh rate) - time taken to get frame
-    long timeLeft = (long)(1000.0f / last_hardware_refresh_rate) - (rtcMillis() - now);
+    long timeLeft = millis() - frame_start_time;
+    timeLeft = (long)(1000.0f / last_hardware_refresh_rate) - timeLeft;
 
     if (timeLeft > 0)
     {
@@ -231,36 +232,6 @@ void cam_read_loop(void *pvParameters)
     }
     else
       yield();
-  }
-}
-
-// this function sends mock data to the temps frame queue every 500ms
-static void temps_frame_mock_produce(void *arg)
-{
-  uint8_t temperatures_frame_arr_idx = 0;
-
-  while (1)
-  {
-    if (!at_least_one_subscribed())
-    {
-      vTaskDelay(500 / portTICK_PERIOD_MS);
-      continue;
-    }
-
-    for (int i = 0; i < NUM_TEMPS_PIXELS; i++)
-    {
-      float random_float = 5.0 + ((float)rand() / (float)RAND_MAX) * (100.0 - 5.0);
-      temps_frames[temperatures_frame_arr_idx][i] = random_float;
-    }
-
-    if (xQueueSend(temps_frame_queue, &temperatures_frame_arr_idx, 0) != pdTRUE)
-    {
-      ESP_LOGE(TAG_MAIN, "Failed to send temps frame to queue");
-    }
-
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-
-    temperatures_frame_arr_idx = (temperatures_frame_arr_idx + 1) % MAX_Q_ITEMS;
   }
 }
 
@@ -313,6 +284,7 @@ extern "C" void app_main(void)
   // Initialize BLE
   bt_host_init();
   bt_io_init();
+  bt_inited = true;
 
   xTaskCreate(indicator_task, "indicator_task", 2048, NULL, 1, NULL);
   xTaskCreate(cam_read_loop, "cam_read_loop", 2048 + 1024, NULL, 5, NULL);

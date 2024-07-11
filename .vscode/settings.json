@@ -33,6 +33,23 @@
         "ble_esp_gap.h": "c",
         "syscfg.h": "c",
         "sdkconfig.h": "c",
-        "gpio.h": "c"
+        "gpio.h": "c",
+        "ble_svc_dis.h": "c",
+        "led_indicator.h": "c",
+        "bleprph.h": "c",
+        "prefs.h": "c",
+        "ble_svc_gatt.h": "c",
+        "algorithm": "cpp",
+        "numeric": "cpp",
+        "modlog.h": "c",
+        "esp_sleep.h": "c",
+        "esp_nimble_cfg.h": "c",
+        "inttypes.h": "c",
+        "ble_ead.h": "c",
+        "nimble_port.h": "c",
+        "util.h": "c",
+        "ble_store_config.h": "c",
+        "esp_log.h": "c",
+        "nimble_port_freertos.h": "c"
     }
 }

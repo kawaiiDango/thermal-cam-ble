@@ -46,7 +46,6 @@ void adc_init(adc_channel_t channel)
 #if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
     if (!calibrated)
     {
-        ESP_LOGI(TAG_ADC, "calibration scheme version is %s", "Curve Fitting");
         adc_cali_curve_fitting_config_t cali_config = {
             .unit_id = ADC_UNIT_1,
             .chan = channel,
@@ -61,17 +60,13 @@ void adc_init(adc_channel_t channel)
     }
 #endif
 
-    if (ret == ESP_OK)
-    {
-        ESP_LOGI(TAG_ADC, "Calibration Success");
-    }
-    else if (ret == ESP_ERR_NOT_SUPPORTED || !calibrated)
+    if (ret == ESP_ERR_NOT_SUPPORTED || !calibrated)
     {
         ESP_LOGW(TAG_ADC, "eFuse not burnt, skip software calibration");
     }
-    else
+    else if (ret != ESP_OK)
     {
-        ESP_LOGE(TAG_ADC, "Invalid arg or no memory");
+        ESP_LOGE(TAG_ADC, "adc_cali error: %d", ret);
     }
     adc_inited = true;
     do_calibration = calibrated;
@@ -81,7 +76,6 @@ void adc_deinit()
 {
     ESP_ERROR_CHECK(adc_oneshot_del_unit(adc1_handle));
 #if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
-    ESP_LOGI(TAG_ADC, "deregister %s calibration scheme", "Curve Fitting");
     ESP_ERROR_CHECK(adc_cali_delete_scheme_curve_fitting(adc1_cali_chan0_handle));
 #endif
     adc_inited = false;

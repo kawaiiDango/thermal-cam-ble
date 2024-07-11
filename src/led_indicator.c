@@ -19,7 +19,7 @@ void indicator_task(void *pvParameter)
             break;
         case INDICATOR_NOT_NOTIFYING:
             digitalWrite(USER_LED_PIN, HIGH);
-            delay(4);
+            delay(3);
             digitalWrite(USER_LED_PIN, LOW);
             break;
         case INDICATOR_BONDING_REQ:
