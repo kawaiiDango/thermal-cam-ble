@@ -17,6 +17,8 @@
 #include "adc_stuff.h"
 #include "config.h"
 
+#define TAG "adc"
+
 adc_oneshot_unit_handle_t adc1_handle = NULL;
 adc_cali_handle_t adc1_cali_chan0_handle = NULL;
 bool do_calibration = false;
@@ -62,11 +64,11 @@ void adc_init(adc_channel_t channel)
 
     if (ret == ESP_ERR_NOT_SUPPORTED || !calibrated)
     {
-        ESP_LOGW(TAG_ADC, "eFuse not burnt, skip software calibration");
+        ESP_LOGW(TAG, "eFuse not burnt, skip software calibration");
     }
     else if (ret != ESP_OK)
     {
-        ESP_LOGE(TAG_ADC, "adc_cali error: %d", ret);
+        ESP_LOGE(TAG, "adc_cali error: %d", ret);
     }
     adc_inited = true;
     do_calibration = calibrated;

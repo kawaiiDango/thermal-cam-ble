@@ -6,20 +6,17 @@ extern "C"
 {
 #endif
 
-    enum indicator_state
+    typedef enum 
     {
-        INDICATOR_MLX_NOT_INITED,
         INDICATOR_NOT_NOTIFYING,
         INDICATOR_BONDING_REQ,
         INDICATOR_NOTIFYING,
         INDICATOR_TRANSFER_SUCCESS,
         INDICATOR_READ_FAILED,
-        INDICATOR_TRANSFER_FALED,
-    };
+        INDICATOR_TRANSFER_FAILED,
+    } indicator_state;
 
-    extern enum indicator_state current_indicator_state;
-
-    void indicator_task(void *pvParameter);
+    extern indicator_state current_indicator_state;
 
 #ifdef __cplusplus
 }

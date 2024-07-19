@@ -6,7 +6,7 @@
 #include <store/config/ble_store_config.h>
 #include <esp_log.h>
 
-#define TAG_BLE_HOST "BLE_HOST"
+#define TAG "BLE_HOST"
 
 uint8_t own_addr_type;
 
@@ -44,7 +44,7 @@ static void bleprph_on_sync(void)
 
 void bleprph_host_task(void *param)
 {
-    ESP_LOGI(TAG_BLE_HOST, "BLE Host Task Started");
+    ESP_LOGI(TAG, "BLE Host Task Started");
 
     /* This function will return only when nimble_port_stop() is executed */
     nimble_port_run();

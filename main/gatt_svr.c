@@ -28,9 +28,10 @@
 #include "services/dis/ble_svc_dis.h"
 #include "led_indicator.h"
 #include "prefs.h"
+#include "my_utils.h"
 
 #define MAX_CONNS MYNEWT_VAL(BLE_MAX_CONNECTIONS)
-#define TAG_GATT_SVR "GATT_SVR"
+#define TAG "GATT_SVR"
 
 static const ble_uuid128_t gatt_svr_svc_cam_uuid = GATT_SVR_SVC_CAM_UUID;
 
@@ -166,7 +167,8 @@ static int gatt_svc_access(uint16_t conn_handle, uint16_t attr_handle,
         }
         else if (ble_uuid_cmp(uuid, &gatt_svr_temps_frame_fps_desc_uuid.u) == 0)
         {
-            rc = os_mbuf_append(ctxt->om, &prefs.refreshRate, sizeof(prefs.refreshRate));
+            float refreshRateHz = refreshRateToHz(prefs.refreshRate);
+            rc = os_mbuf_append(ctxt->om, &refreshRateHz, sizeof(refreshRateHz));
             return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
         }
 
@@ -195,10 +197,13 @@ static int gatt_svc_access(uint16_t conn_handle, uint16_t attr_handle,
         if (ble_uuid_cmp(uuid, &gatt_svr_temps_frame_fps_desc_uuid.u) == 0)
         {
             uint16_t len;
-            rc = gatt_svr_write(ctxt->om, sizeof(prefs.refreshRate), sizeof(prefs.refreshRate), &prefs.refreshRate, &len);
+            float refreshRateHz;
+            rc = gatt_svr_write(ctxt->om, sizeof(refreshRateHz), sizeof(refreshRateHz), &refreshRateHz, &len);
 
             if (rc != 0)
                 return rc;
+
+            prefs.refreshRate = hzToRefreshRate(refreshRateHz);
 
             return 0;
         }
@@ -307,7 +312,7 @@ static void notify_task(void *arg)
 
         if (xQueueReceive(temps_frame_queue, &temps_frame_idx, 5000 / portTICK_PERIOD_MS) != pdTRUE)
         {
-            ESP_LOGE(TAG_GATT_SVR, "Did not receive temps frame from queue.");
+            ESP_LOGE(TAG, "Did not receive temps frame from queue.");
             vTaskDelay(500 / portTICK_PERIOD_MS);
             continue;
         }
@@ -355,7 +360,7 @@ static void notify_task(void *arg)
                 if (om == NULL)
                 {
                     /* Memory not available for mbuf */
-                    ESP_LOGE(TAG_GATT_SVR, "No MBUFs available from pool, removing connection handle %d", conn_handle);
+                    ESP_LOGE(TAG, "No MBUFs available from pool, removing connection handle %d", conn_handle);
                     remove_notify_conn_handle(conn_handle);
                     continue;
                 }
@@ -364,7 +369,7 @@ static void notify_task(void *arg)
 
                 if (rc != 0)
                 {
-                    ESP_LOGE(TAG_GATT_SVR, "Error sending notification; rc = %d", rc);
+                    ESP_LOGE(TAG, "Error sending notification; rc = %d", rc);
 
                     if (!at_least_one_subscribed())
                         continue;
@@ -374,7 +379,7 @@ static void notify_task(void *arg)
 
                     // do not set if disconnected
                     if (conn_handle != BLE_HS_CONN_HANDLE_NONE)
-                        current_indicator_state = INDICATOR_TRANSFER_FALED;
+                        current_indicator_state = INDICATOR_TRANSFER_FAILED;
 
                     // xSemaphoreGive(notify_sem);
                     /* Most probably error is because we ran out of mbufs (rc = 6),
@@ -471,13 +476,9 @@ int gatt_svr_init(void)
     ble_svc_dis_firmware_revision_set("1.0.0");
     ble_svc_dis_software_revision_set("1.0.0");
     ble_svc_dis_system_id_set("1234567890");
-    const char pnp_val[7] = {
-        0x01,                                                                                    // 0x1=BT, 0x2=USB
-        DIS_COMPANY_IDENTIFIER_ESPRESSIF & 0xFF, (DIS_COMPANY_IDENTIFIER_ESPRESSIF >> 8) & 0xFF, // VID
-        DIS_PRODUCT_IDENTIFIER & 0xFF, (DIS_PRODUCT_IDENTIFIER >> 8) & 0xFF,                     // PID
-        DIS_PRODUCT_VERSION & 0xFF, (DIS_PRODUCT_VERSION >> 8) & 0xFF                            // VERSION
-    };
-    ble_svc_dis_pnp_id_set(pnp_val);
+
+    const char *pnp_id = "\x01\xe5\x02\x01\x01\x01\x01";
+    ble_svc_dis_pnp_id_set(pnp_id);
 
     rc = ble_gatts_count_cfg(gatt_svr_svcs);
     if (rc != 0)

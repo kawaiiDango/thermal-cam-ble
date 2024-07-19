@@ -26,5 +26,6 @@
 #define MAX_Q_ITEMS 4
 #define MAX_FREQ_MHZ 80
 #define MIN_FREQ_MHZ 10
-#define DEBUG_MODE
+// #define DEBUG_MODE
+// #define MLX90640_DEBUG
 #endif

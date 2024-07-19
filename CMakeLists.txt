@@ -1,3 +1,15 @@
 cmake_minimum_required(VERSION 3.16.0)
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+
+add_compile_definitions(MYNEWT_VAL_BLE_SVC_DIS_MODEL_NUMBER_READ_PERM=0)
+add_compile_definitions(MYNEWT_VAL_BLE_SVC_DIS_SERIAL_NUMBER_READ_PERM=0)
+add_compile_definitions(MYNEWT_VAL_BLE_SVC_DIS_HARDWARE_REVISION_READ_PERM=0)
+add_compile_definitions(MYNEWT_VAL_BLE_SVC_DIS_FIRMWARE_REVISION_READ_PERM=0)
+add_compile_definitions(MYNEWT_VAL_BLE_SVC_DIS_SOFTWARE_REVISION_READ_PERM=0)
+add_compile_definitions(MYNEWT_VAL_BLE_SVC_DIS_MANUFACTURER_NAME_READ_PERM=0)
+add_compile_definitions(MYNEWT_VAL_BLE_SVC_DIS_SYSTEM_ID_READ_PERM=0)
+add_compile_definitions(MYNEWT_VAL_BLE_SVC_DIS_PNP_ID_READ_PERM=0)
+add_compile_definitions(MYNEWT_VAL_BLE_SVC_DIS_DEFAULT_READ_PERM=0)
+
 project(thermal-cam-bt)

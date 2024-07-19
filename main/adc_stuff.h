@@ -10,8 +10,6 @@ extern "C"
 {
 #endif
 
-#define TAG_ADC "adc"
-
 void adc_deinit();
 float battery_voltage_read(void);
 

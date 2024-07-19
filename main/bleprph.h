@@ -50,8 +50,8 @@ extern "C"
 #define GATT_SVR_CHR_TEST_UUID BLE_UUID128_INIT(0x7b, 0x26, 0x1c, 0xb9, 0x18, 0x69, 0xfd, 0xaf, 0x28, 0x44, 0xa7, 0x7d, 0x3d, 0xa2, 0x6f, 0xf9);
 /* Device Information configuration */
 #define DIS_COMPANY_IDENTIFIER_ESPRESSIF 0x02E5
-#define DIS_PRODUCT_IDENTIFIER 0x0001
-#define DIS_PRODUCT_VERSION 0x0001
+#define DIS_PRODUCT_IDENTIFIER 0x0101
+#define DIS_PRODUCT_VERSION 0x0101
 
 #define ADV_APPEARANCE 0x0300                   // generic thermometer
 #define MIN_REQUIRED_MBUF 2 * NUM_TEMPS_PACKETS /* Assuming payload of 500Bytes and each mbuf can take 292Bytes.  */

@@ -8,12 +8,11 @@ extern "C"
 {
 #endif
 
-#define TAG_PREFS "prefs"
 
     struct MyPreferences
     {
-        float refreshRate;
-        unsigned int lastResetReason;
+        uint8_t refreshRate;
+        uint8_t lastResetReason;
     };
 
     extern struct MyPreferences prefs;

@@ -1,0 +1,10 @@
+--- ble_store_config.h	2024-07-19 22:05:43.801157440 +0530
++++ ble_store_config.h	2024-07-18 23:31:45.144050839 +0530
+@@ -31,6 +31,7 @@
+                           union ble_store_value *value);
+ int ble_store_config_write(int obj_type, const union ble_store_value *val);
+ int ble_store_config_delete(int obj_type, const union ble_store_key *key);
++void ble_store_config_init(void); // added
+ 
+ #ifdef __cplusplus
+ }
