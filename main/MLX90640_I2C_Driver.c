@@ -14,7 +14,7 @@ const i2c_master_bus_config_t i2c_master_bus_config = {
 	.scl_io_num = THERMAL_CAM_SCL_PIN,
 	.clk_source = I2C_CLK_SRC_DEFAULT,
 	.glitch_ignore_cnt = 7,
-	.flags.enable_internal_pullup = false};
+	.flags.enable_internal_pullup = true};
 
 const i2c_device_config_t i2c_master_device_config = {
 	.dev_addr_length = I2C_ADDR_BIT_LEN_7,
@@ -36,6 +36,7 @@ void MLX90640_I2CInit()
 	}
 	// Initialize the I2C bus
 	ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_master_bus_config, &master_bus_handle));
+
 	ESP_ERROR_CHECK(i2c_master_bus_add_device(master_bus_handle, &i2c_master_device_config, &master_dev_handle));
 	// Probe the slave device
 	ESP_ERROR_CHECK(i2c_master_probe(master_bus_handle, MLX90640_I2CADDR_DEFAULT, I2C_TIMEOUT_MS));
