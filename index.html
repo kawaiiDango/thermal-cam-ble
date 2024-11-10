@@ -19,6 +19,7 @@
         background-color: #000;
         color: #999;
         border: solid 1px #999;
+        width: 100%;
       }
 
       button {
@@ -255,6 +256,8 @@
               disabled
               oninput="updateSettings()"
           /></label>
+          <label id="emissivityLabel" for="emissivityValue">Emissivity</label>
+          <select id="emissivityValue" onchange="setEmissivityValue()"></select>
         </div>
       </div>
       <div class="flex hide" id="offsetContainer">
@@ -274,14 +277,16 @@
           <button id="scalePlus">+</button>
         </div>
       </div>
-      <div class="center">
-        <button id="connectDisconnect">Connect</button>
-      </div>
-      <div class="center">
-        <button id="capture">Capture</button>
+      <div class="center flex">
+        <div class="flex flex-1">
+          <button id="connectDisconnect">Connect</button>
+        </div>
+        <div class="flex flex-1">
+          <button id="capture">Capture</button>
+        </div>
       </div>
       <div id="status" class="m-top center">
-        <span id="debugStatus"></span>
+        <span id="statusText"></span>
       </div>
     </div>
     <script>
@@ -322,6 +327,7 @@
           stops: ["#FFFFFF", "#000000"],
         },
       ];
+
       let currentPalette = palettes[0];
       let accumlator = [];
       let average = false;
@@ -342,11 +348,13 @@
       const tempsFrameCharacteristicUuid =
         "be55aaa5-8188-4063-8a57-eea168985662";
       const camFpsFloatDescUuid = "9c54c864-fe2e-4f5f-96c0-793147ec8094";
+      const camEmissivityFloatDescUuid = "4c0a0177-da3e-4f47-b0db-4c970f81f582";
 
       //Global Variables to Handle Bluetooth
       let bleDevice = null;
       let gattServer = null;
       let camFpsFloatDesc = null;
+      let camEmissivityFloatDesc = null;
       let tempsFrameCharacteristic = null;
       let watchAdvAbortController = null;
 
@@ -357,11 +365,12 @@
       const captureButton = document.getElementById("capture");
       const connectDisconnectButton =
         document.getElementById("connectDisconnect");
-      const statusContainer = document.getElementById("debugStatus");
+      const statusContainer = document.getElementById("statusText");
       const mainCanvasElem = document.getElementById("canvas");
       const fpsLabelElem = document.getElementById("fpsLabel");
       const paletteValue = document.getElementById("paletteValue");
       const hardwareFpsValue = document.getElementById("hardwareFpsValue");
+      const emissivityValue = document.getElementById("emissivityValue");
       const opacityValue = document.getElementById("opacityValue");
       const minValue = document.getElementById("minValue");
       const maxValue = document.getElementById("maxValue");
@@ -471,9 +480,14 @@
             camFpsFloatDescUuid
           );
 
+          camEmissivityFloatDesc = await tempsFrameCharacteristic.getDescriptor(
+            camEmissivityFloatDescUuid
+          );
+
           console.log("Notifications Started.");
 
           await readFpsValue();
+          await readEmissivityValue();
 
           connectDisconnectButton.innerHTML = "Disconnect";
           captureButton.classList.remove("hide");
@@ -915,12 +929,29 @@
         hardwareFpsValue.value = floatVal;
       }
 
+      async function readEmissivityValue() {
+        // read from the device
+        const data = await camEmissivityFloatDesc.readValue();
+        // round to 2 decimal places, as converting from binary messes up the float
+        const floatVal = new Float32Array(data.buffer)[0].toFixed(2);
+        console.log("Emissivity from device: ", floatVal);
+        emissivityValue.value = floatVal;
+      }
+
       async function setFpsValue() {
         // send to the device
         console.log("Setting FPS to: ", hardwareFpsValue.value);
         const fps = parseFloat(hardwareFpsValue.value);
         const data = new Float32Array([fps]);
         await camFpsFloatDesc.writeValue(data.buffer);
+      }
+
+      async function setEmissivityValue() {
+        // send to the device
+        console.log("Setting emissivity to: ", emissivityValue.value);
+        const emissivity = parseFloat(emissivityValue.value);
+        const data = new Float32Array([emissivity]);
+        await camEmissivityFloatDesc.writeValue(data.buffer);
       }
 
       function stopWebcam() {
@@ -1249,6 +1280,142 @@
         fpsValues.forEach((fps) => {
           hardwareFpsValue.options[hardwareFpsValue.options.length] =
             new Option(fps + " FPS", fps);
+        });
+      }
+
+
+      const emissivities = {
+        "Default": 0.95,
+        "Aluminium: anodised": 0.77,
+        "Aluminium: polished": 0.05,
+        "Asbestos: board": 0.96,
+        "Asbestos: fabric": 0.78,
+        "Asbestos: paper": 0.93,
+        "Asbestos: slate": 0.96,
+        "Brass: highly polished": 0.03,
+        "Brass: oxidized": 0.61,
+        "Brick: common": 0.83,
+        "Brick: common, red": 0.93,
+        "Brick: facing, red": 0.92,
+        "Brick: fireclay": 0.75,
+        "Brick: masonry": 0.94,
+        "Brick: red": 0.90,
+        "Carbon: candle soot": 0.95,
+        "Carbon: graphite, filed surface": 0.98,
+        "Carbon: purified": 0.80,
+        "Cement": 0.54,
+        "Charcoal: powder": 0.96,
+        "Chipboard: untreated": 0.90,
+        "Chromium: polished": 0.10,
+        "Clay: fired": 0.91,
+        "Concrete": 0.92,
+        "Concrete: dry": 0.95,
+        "Concrete: rough": 0.94,
+        "Copper: polished": 0.05,
+        "Copper: oxidized": 0.65,
+        "Enamel: lacquer": 0.90,
+        "Fabric: Hessian, green": 0.88,
+        "Fabric: Hessian, uncoloured": 0.87,
+        "Fibreglass": 0.75,
+        "Fibre board: porous, untreated": 0.85,
+        "Fibre board: hard, untreated": 0.85,
+        "Filler: white": 0.88,
+        "Firebrick": 0.68,
+        "Food & Organic Materials": 0.96,
+        "Formica": 0.94,
+        "Galvanized Pipe": 0.46,
+        "Glass": 0.92,
+        "Glass: chemical ware (partly transparent)": 0.97,
+        "Glass: frosted": 0.83,
+        "Glass: polished plate": 0.94,
+        "Granite: natural surface": 0.96,
+        "Graphite: powder": 0.97,
+        "Gravel": 0.28,
+        "Gypsum": 0.85,
+        "Hardwood: across grain": 0.82,
+        "Hardwood: along grain": 0.70,
+        "Ice": 0.97,
+        "Iron: heavily rusted": 0.93,
+        "Lacquer: bakelite": 0.93,
+        "Lacquer: dull black": 0.97,
+        "Lampblack": 0.96,
+        "Limestone: natural surface": 0.96,
+        "Mortar": 0.87,
+        "Mortar: dry": 0.94,
+        "P.V.C.": 0.92,
+        "Paint: aluminium": 0.45,
+        "Paint, oil: average of 16 colours": 0.94,
+        "Paint: oil, black, flat": 0.94,
+        "Paint: oil, black, gloss": 0.92,
+        "Paint: oil, grey, flat": 0.97,
+        "Paint: oil, grey, gloss": 0.94,
+        "Paint: oil, various colours": 0.94,
+        "Paint: plastic, black": 0.95,
+        "Paint: plastic, white": 0.84,
+        "Paper: black": 0.90,
+        "Paper: black, dull": 0.94,
+        "Paper: black, shiny": 0.90,
+        "Paper: cardboard box": 0.81,
+        "Paper: green": 0.85,
+        "Paper: red": 0.76,
+        "Paper: white": 0.68,
+        "Paper: white bond": 0.93,
+        "Paper: yellow": 0.72,
+        "Paper: tar": 0.92,
+        "Pipes: glazed": 0.83,
+        "Plaster": 0.88,
+        "Plaster: rough coat": 0.91,
+        "Plasterboard: untreated": 0.90,
+        "Plastic: acrylic, clear": 0.94,
+        "Plastic: black": 0.95,
+        "Plastic: white": 0.84,
+        "Plastic paper: red": 0.94,
+        "Plastic paper: white": 0.84,
+        "Plexiglass: Perspex": 0.86,
+        "Plywood": 0.90,
+        "Plywood: commercial, smooth finish, dry": 0.82,
+        "Plywood: untreated": 0.83,
+        "Polypropylene": 0.97,
+        "Porcelain: glazed": 0.92,
+        "Quartz": 0.93,
+        "Redwood: wrought, untreated": 0.83,
+        "Redwood: unwrought, untreated": 0.84,
+        "Rubber": 0.95,
+        "Rubber: stopper, black": 0.97,
+        "Sand": 0.90,
+        "Skin, human": 0.95,
+        "Snow": 0.80,
+        "Soil: dry": 0.92,
+        "Soil: frozen": 0.93,
+        "Soil: saturated with water": 0.95,
+        "Stainless Steel": 0.59,
+        "Stainless Plate": 0.34,
+        "Steel: galvanized": 0.28,
+        "Steel: rolled freshly": 0.24,
+        "Styrofoam: insulation": 0.60,
+        "Tape: electrical, insulating, black": 0.97,
+        "Tape: masking": 0.92,
+        "Tile: floor, asbestos": 0.94,
+        "Tile: glazed": 0.94,
+        "Tin: burnished": 0.05,
+        "Tin: commercial tin-plated sheet iron": 0.06,
+        "Varnish: flat": 0.93,
+        "Wallpaper: slight pattern, light grey": 0.85,
+        "Wallpaper: slight pattern, red": 0.90,
+        "Water": 0.95,
+        "Water: distilled": 0.95,
+        "Water: ice, smooth": 0.96,
+        "Water: frost crystals": 0.98,
+        "Water: snow": 0.85,
+        "Wood: planed": 0.90,
+        "Wood: panelling, light finish": 0.87,
+        "Wood: spruce, polished, dry": 0.86
+      };
+
+      if (emissivityValue.options.length == 0) {
+        Object.entries(emissivities).forEach(([material, emissivity]) => {
+          emissivityValue.options[emissivityValue.options.length] =
+            new Option((material + ": " + emissivity), emissivity);
         });
       }
 

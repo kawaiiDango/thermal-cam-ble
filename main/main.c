@@ -17,6 +17,7 @@ uint64_t timeit_t1 = 0;
 bool mlx_powered_on = false;
 bool mlx_inited = false;
 bool bt_inited = false;
+float emissivity = 0.95; // resets at boot
 RTC_DATA_ATTR int boot_count = 0;
 indicator_state current_indicator_state = INDICATOR_NOT_NOTIFYING;
 
@@ -239,7 +240,7 @@ void cam_read_loop(void *pvParameters)
     }
 
     // timeit("ignore");
-    int res = mlx_getFrame(temps_frames[temperatures_frame_arr_idx]);
+    int res = mlx_getFrame(temps_frames[temperatures_frame_arr_idx], emissivity);
 
     if (res != 0)
     {

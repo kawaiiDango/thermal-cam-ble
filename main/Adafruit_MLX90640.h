@@ -64,7 +64,7 @@ void mlx_setResolution(mlx90640_resolution_t res);
 mlx90640_refreshrate_t mlx_getRefreshRate(void);
 void mlx_setRefreshRate(mlx90640_refreshrate_t res);
 
-int mlx_getFrame(float *framebuf);
+int mlx_getFrame(float *framebuf, float emissivity);
 
 float mlx_getTa();
 

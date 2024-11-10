@@ -52,6 +52,7 @@ uint8_t last_refresh_rate = 2;
 
 /* Characteristic User Description */
 static const ble_uuid128_t gatt_svr_temps_frame_fps_desc_uuid = GATT_SVR_TEMPS_FRAME_FPS_DESC_UUID;
+static const ble_uuid128_t gatt_svr_temps_frame_emissivity_desc_uuid = GATT_SVR_TEMPS_FRAME_EMISSIVITY_DESC_UUID;
 static const ble_uuid16_t gatt_svr_usr_dsc_uuid = GATT_SVR_USR_DESC_UUID;
 
 static int gatt_svc_access(uint16_t conn_handle, uint16_t attr_handle,
@@ -75,6 +76,7 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
                                                                 .access_cb = gatt_svc_access,
                                                                 .arg = &gatt_svr_temps_frame_chr_uuid.u},
                                                                {.uuid = &gatt_svr_temps_frame_fps_desc_uuid.u, .att_flags = BLE_ATT_F_READ | BLE_ATT_F_WRITE, .access_cb = gatt_svc_access, .arg = &gatt_svr_temps_frame_chr_uuid.u},
+                                                               {.uuid = &gatt_svr_temps_frame_emissivity_desc_uuid.u, .att_flags = BLE_ATT_F_READ | BLE_ATT_F_WRITE, .access_cb = gatt_svc_access, .arg = &gatt_svr_temps_frame_chr_uuid.u},
                                                                {
                                                                    0, /* No more descriptors in this characteristic */
                                                                }},
@@ -171,6 +173,11 @@ static int gatt_svc_access(uint16_t conn_handle, uint16_t attr_handle,
             rc = os_mbuf_append(ctxt->om, &refreshRateHz, sizeof(refreshRateHz));
             return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
         }
+        else if (ble_uuid_cmp(uuid, &gatt_svr_temps_frame_emissivity_desc_uuid.u) == 0)
+        {
+            rc = os_mbuf_append(ctxt->om, &emissivity, sizeof(emissivity));
+            return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+        }
 
         goto unknown;
     case BLE_GATT_ACCESS_OP_WRITE_DSC:
@@ -204,6 +211,15 @@ static int gatt_svc_access(uint16_t conn_handle, uint16_t attr_handle,
                 return rc;
 
             prefs.refreshRate = hzToRefreshRate(refreshRateHz);
+
+            return 0;
+        } else if (ble_uuid_cmp(uuid, &gatt_svr_temps_frame_emissivity_desc_uuid.u) == 0)
+        {
+            uint16_t len;
+            rc = gatt_svr_write(ctxt->om, sizeof(emissivity), sizeof(emissivity), &emissivity, &len);
+
+            if (rc != 0)
+                return rc;
 
             return 0;
         }

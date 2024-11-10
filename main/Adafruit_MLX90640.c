@@ -108,9 +108,8 @@ void mlx_setRefreshRate(mlx90640_refreshrate_t rate)
  *    @param  framebuf 24*32 floating point memory buffer
  *    @return 0 on success
  */
-int mlx_getFrame(float *framebuf)
+int mlx_getFrame(float *framebuf, float emissivity)
 {
-  float emissivity = 0.95;
   float tr = 23.15;
   uint16_t mlx90640Frame[834];
   int status;
