@@ -4,7 +4,7 @@ An MLX90640 thermal camera connected to an ESP32-C6 that sends frames over BLE t
 
 Inspired by [doct0r0710/Esp32ThermalCam](https://github.com/doct0r0710/Esp32ThermalCam)
 
-MLX90640 driver based on [adafruit/Adafruit_MLX90640](https://github.com/adafruit/Adafruit_MLX90640) and the original unmodified [mlx90640-library](https://github.com/melexis/mlx90640-library)
+MLX90640 driver based on [adafruit/Adafruit_MLX90640](https://github.com/adafruit/Adafruit_MLX90640) and the original [mlx90640-library](https://github.com/melexis/mlx90640-library)
 
 Use `git clone --recurse-submodules https://github.com/kawaiiDango/thermal-cam-ble` to include that MLX90640 driver.
 
