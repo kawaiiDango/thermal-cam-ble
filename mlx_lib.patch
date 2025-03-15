@@ -1,0 +1,30 @@
+From b05cb06f3cb1b026f0e326ba13b1a65ffb74363f Mon Sep 17 00:00:00 2001
+From: kawaiiDango <1066519+kawaiiDango@users.noreply.github.com>
+Date: Sat, 15 Mar 2025 08:30:56 +0530
+Subject: [PATCH] update POW2
+
+---
+ headers/MLX90640_API.h | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/headers/MLX90640_API.h b/headers/MLX90640_API.h
+index 551bf32..21440d4 100644
+--- a/headers/MLX90640_API.h
++++ b/headers/MLX90640_API.h
+@@ -73,7 +73,12 @@
+ #define MLX90640_NIBBLE3(reg16) ((reg16 & MLX90640_NIBBLE3_MASK) >> 8)
+ #define MLX90640_NIBBLE4(reg16) ((reg16 & MLX90640_NIBBLE4_MASK) >> 12)
+ 
+-#define POW2(x) pow(2, (double)x) 
++// #define POW2(x) pow(2, (double)x) 
++
++// Updated macro to deal with
++// Guru Meditation Error: Core  0 panic'ed (Stack protection fault). 
++// --- 0x42073ae4: __ieee754_pow at /builds/idf/crosstool-NG/.build/riscv32-esp-elf/src/newlib/newlib/libm/math/e_pow.c:108
++#define POW2(x) ((float)((uint64_t)1 << (x)))
+ 
+ #define SCALEALPHA 0.000001
+     
+-- 
+2.48.1
+
